@@ -6,9 +6,11 @@ import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
 import 'package:fixnear/core/services/cloudinary_service.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
+import 'package:fixnear/core/theme/app_theme.dart';
 import 'package:fixnear/core/utils/formatters.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
 import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
+import 'package:fixnear/features/profile/edit_profile_screen.dart';
 import 'package:fixnear/features/provider/provider_home_screen.dart';
 
 void main() {
@@ -301,6 +303,164 @@ void main() {
     await tester.tap(find.text('Edit profile'));
     await tester.pumpAndSettle();
     expect(find.text('Save changes'), findsOneWidget);
+  });
+
+  group('layouts', () {
+    final profile = AppUser(
+      id: 'customer-1',
+      email: 'casey@example.com',
+      name: 'Casey Customer',
+      role: UserRole.customer,
+    );
+    // Built inside each test: constructing an HTTP client outside a test
+    // zone fails under flutter_test.
+    CloudinaryService uploader() =>
+        CloudinaryService(cloudName: '', uploadPreset: '');
+
+    _FakeMarketplaceRepository busyRepository() => _FakeMarketplaceRepository()
+      ..customerRequests = [
+        ServiceRequest(
+          id: 'request-q',
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          category: 'Electrical',
+          description: 'Replace a ceiling light fixture in the living room',
+          serviceArea: 'Poblacion District, Davao City',
+          status: RequestStatus.quoted,
+          createdAt: DateTime(2026),
+          scheduledAt: DateTime(2026, 10, 2, 9, 30),
+        ),
+        ServiceRequest(
+          id: 'request-d',
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          category: 'Plumbing',
+          description: 'Fix a leaking faucet',
+          serviceArea: 'Davao City',
+          status: RequestStatus.completed,
+          providerUid: 'provider-1',
+          providerName: 'Provider One',
+          quotedPrice: 1200,
+          createdAt: DateTime(2026),
+        ),
+      ]
+      ..quotesByRequest['request-q'] = [
+        ProviderQuote(
+          providerUid: 'provider-2',
+          providerName: 'Provider Two With A Long Business Name',
+          price: 1200,
+          note: 'Includes materials, installation and cleanup afterwards.',
+          createdAt: DateTime(2026),
+        ),
+      ]
+      ..openRequests = [
+        ServiceRequest(
+          id: 'request-o',
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          category: 'Cleaning',
+          description: 'Deep clean a two-bedroom apartment before moving out',
+          serviceArea: 'Lanang, Davao City',
+          status: RequestStatus.requested,
+          providerUid: 'provider-1',
+          createdAt: DateTime(2026),
+        ),
+      ];
+
+    Future<void> pumpAt(WidgetTester tester, double width, Widget home) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(theme: AppTheme.lightTheme, home: home),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> checkGuidelines(WidgetTester tester) async {
+      await expectLater(tester, meetsGuideline(androidTapTargetGuideline));
+      await expectLater(tester, meetsGuideline(textContrastGuideline));
+    }
+
+    for (final width in [360.0, 1280.0]) {
+      testWidgets('sign-in and provider registration at ${width.toInt()}px', (
+        tester,
+      ) async {
+        await pumpAt(tester, width, const LoginScreen());
+        await checkGuidelines(tester);
+        await tester.tap(find.text('Create an account'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Customer'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Service provider').last);
+        await tester.pumpAndSettle();
+        await checkGuidelines(tester);
+      });
+
+      testWidgets('customer screens at ${width.toInt()}px', (tester) async {
+        await pumpAt(
+          tester,
+          width,
+          CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: busyRepository(),
+            profile: profile,
+            imageUploader: uploader(),
+            onSaveProfile: ({required name, phone, photoUrl}) async {},
+          ),
+        );
+        await checkGuidelines(tester);
+
+        await tester.tap(find.text('Requests'));
+        await tester.pumpAndSettle();
+        // The quoted job and the unpaid job both wait on the customer.
+        expect(find.byIcon(Icons.priority_high_rounded), findsNWidgets(2));
+        await checkGuidelines(tester);
+
+        await tester.tap(find.text('Account').last);
+        await tester.pumpAndSettle();
+        await checkGuidelines(tester);
+
+        await tester.tap(find.text('Home'));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Request service').first);
+        await tester.pumpAndSettle();
+        expect(find.text('Send request'), findsOneWidget);
+        await checkGuidelines(tester);
+      });
+
+      testWidgets('provider screens at ${width.toInt()}px', (tester) async {
+        await pumpAt(
+          tester,
+          width,
+          ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: busyRepository(),
+          ),
+        );
+        // A job sent directly to this provider waits on them.
+        expect(find.byIcon(Icons.priority_high_rounded), findsOneWidget);
+        await checkGuidelines(tester);
+        await tester.tap(find.text('My jobs'));
+        await tester.pumpAndSettle();
+        await checkGuidelines(tester);
+      });
+
+      testWidgets('edit profile at ${width.toInt()}px', (tester) async {
+        await pumpAt(
+          tester,
+          width,
+          EditProfileScreen(
+            profile: profile,
+            uploader: uploader(),
+            onSave: ({required name, phone, photoUrl}) async {},
+          ),
+        );
+        await checkGuidelines(tester);
+      });
+    }
   });
 
   test('formatters produce readable values', () {

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/attention.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
@@ -46,6 +47,7 @@ class ProviderHomeScreen extends StatelessWidget {
         body: TabBarView(
           children: [
             _RequestList(
+              providerUid: providerUid,
               requests: repository.watchOpenRequests(providerUid),
               emptyMessage: 'No open requests nearby yet.',
               actionLabel: 'Send quote',
@@ -70,6 +72,7 @@ class ProviderHomeScreen extends StatelessWidget {
                   repository.declineRequest(request.id, providerUid),
             ),
             _RequestList(
+              providerUid: providerUid,
               requests: repository.watchProviderJobs(providerUid),
               emptyMessage: 'Accepted jobs will appear here.',
               actionLabel: null,
@@ -104,6 +107,7 @@ class ProviderHomeScreen extends StatelessWidget {
 
 class _RequestList extends StatelessWidget {
   const _RequestList({
+    required this.providerUid,
     required this.requests,
     required this.emptyMessage,
     required this.actionLabel,
@@ -114,6 +118,7 @@ class _RequestList extends StatelessWidget {
     this.showProgressActions = false,
   });
 
+  final String providerUid;
   final Stream<List<ServiceRequest>> requests;
   final String emptyMessage;
   final String? actionLabel;
@@ -186,7 +191,10 @@ class _RequestList extends StatelessWidget {
                 Expanded(
                   child: Text(request.category, style: textTheme.titleMedium),
                 ),
-                StatusChip(status: request.status),
+                StatusChip(
+                  status: request.status,
+                  needsYou: providerNeedsToAct(request, providerUid),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -226,21 +234,22 @@ class _RequestList extends StatelessWidget {
               Text(
                 'Payment received',
                 style: textTheme.bodySmall?.copyWith(
-                  color: AppTheme.successGreen,
+                  color: AppTheme.success,
                   fontWeight: FontWeight.w600,
                 ),
               ),
             if (label != null) ...[
               const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                runSpacing: 8,
                 children: [
                   if (onDecline != null)
                     TextButton(
                       onPressed: () => _runDecline(context, request),
                       child: const Text('Decline'),
                     ),
-                  const SizedBox(width: 8),
                   FilledButton(
                     onPressed: () => _runAction(context, request),
                     child: Text(label),
@@ -353,7 +362,7 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 32, color: AppTheme.textSecondary),
+          Icon(icon, size: 32, color: AppTheme.inkMuted),
           const SizedBox(height: 10),
           Text(message, textAlign: TextAlign.center),
         ],

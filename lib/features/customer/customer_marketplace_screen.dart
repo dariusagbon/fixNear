@@ -6,6 +6,7 @@ import '../../core/models/marketplace_models.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/attention.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
@@ -95,7 +96,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.handyman_rounded, color: AppTheme.primaryBlue),
+              const Icon(Icons.handyman_rounded, color: AppTheme.ink),
               const SizedBox(width: 8),
               Text('FixNear', style: Theme.of(context).textTheme.titleLarge),
               const Spacer(),
@@ -124,10 +125,8 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           const SizedBox(height: 4),
           Text(
             'What can we help you with?',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: AppTheme.textPrimary,
-            ),
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800, color: AppTheme.ink),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -167,7 +166,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                   avatar: Icon(
                     _categoryIcon(category),
                     size: 18,
-                    color: selected ? Colors.white : AppTheme.primaryBlue,
+                    color: selected ? Colors.white : AppTheme.ink,
                   ),
                   showCheckmark: false,
                   onSelected: (_) =>
@@ -542,11 +541,7 @@ class _ProviderCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.circle,
-                  size: 10,
-                  color: AppTheme.successGreen,
-                ),
+                const Icon(Icons.circle, size: 10, color: AppTheme.success),
                 const SizedBox(width: 5),
                 const Text('Available', style: TextStyle(fontSize: 12)),
               ],
@@ -614,7 +609,10 @@ class _CustomerRequestCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                StatusChip(status: request.status),
+                StatusChip(
+                  status: request.status,
+                  needsYou: customerNeedsToAct(request),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -641,9 +639,26 @@ class _CustomerRequestCard extends StatelessWidget {
               StreamBuilder<List<ProviderQuote>>(
                 stream: quotes,
                 builder: (context, snapshot) {
+                  if (snapshot.hasError) {
+                    return const _CardNote(
+                      icon: Icons.cloud_off_outlined,
+                      text: 'Could not load quotes. Check your connection.',
+                    );
+                  }
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const Padding(
+                      padding: EdgeInsets.only(top: 12),
+                      child: LinearProgressIndicator(),
+                    );
+                  }
                   final availableQuotes =
                       snapshot.data ?? const <ProviderQuote>[];
-                  if (availableQuotes.isEmpty) return const SizedBox.shrink();
+                  if (availableQuotes.isEmpty) {
+                    return const _CardNote(
+                      icon: Icons.hourglass_empty_rounded,
+                      text: 'Waiting for providers to send quotes.',
+                    );
+                  }
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -782,6 +797,10 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               initialValue: _category,
+              isExpanded: true,
+              elevation: 0,
+              dropdownColor: AppTheme.tint,
+              borderRadius: BorderRadius.circular(12),
               decoration: const InputDecoration(labelText: 'Service category'),
               items: serviceCategories
                   .map(
@@ -992,9 +1011,34 @@ class _InlineMessage extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
       child: Column(
         children: [
-          Icon(icon, size: 30, color: AppTheme.textSecondary),
+          Icon(icon, size: 30, color: AppTheme.inkMuted),
           const SizedBox(height: 10),
           Text(message, textAlign: TextAlign.center),
+        ],
+      ),
+    );
+  }
+}
+
+/// A small icon-and-text line inside a card, for inline empty and error
+/// states.
+class _CardNote extends StatelessWidget {
+  const _CardNote({required this.icon, required this.text});
+
+  final IconData icon;
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: AppTheme.inkMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text, style: Theme.of(context).textTheme.bodySmall),
+          ),
         ],
       ),
     );

@@ -6,6 +6,7 @@ import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/theme/app_theme.dart';
 import '../customer/customer_marketplace_screen.dart';
 import '../provider/provider_home_screen.dart';
 
@@ -195,7 +196,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const Icon(
                       Icons.handyman_rounded,
                       size: 40,
-                      color: Color(0xFF1E7AF9),
+                      color: AppTheme.ink,
                     ),
                     const SizedBox(height: 12),
                     const Text(
@@ -214,7 +215,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 15,
-                        color: Color(0xFF5F6F85),
+                        color: AppTheme.inkMuted,
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -231,6 +232,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 14),
                       DropdownButtonFormField<UserRole>(
                         initialValue: _role,
+                        isExpanded: true,
+                        elevation: 0,
+                        dropdownColor: AppTheme.tint,
+                        borderRadius: BorderRadius.circular(12),
                         decoration: const InputDecoration(
                           labelText: 'Account type',
                         ),
@@ -252,6 +257,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       if (_role == UserRole.provider) ...[
                         DropdownButtonFormField<String>(
                           initialValue: _serviceCategory,
+                          isExpanded: true,
+                          elevation: 0,
+                          dropdownColor: AppTheme.tint,
+                          borderRadius: BorderRadius.circular(12),
                           decoration: const InputDecoration(
                             labelText: 'Main service',
                           ),

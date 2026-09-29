@@ -115,7 +115,8 @@ class ServiceRequest {
           (data['declinedProviderUids'] as List<dynamic>? ?? const [])
               .whereType<String>()
               .toList(),
-      locationLabel: (data['locationLabel'] as String?) ??
+      locationLabel:
+          (data['locationLabel'] as String?) ??
           (location is Map ? location['label'] as String? : null) ??
           data['serviceArea'] as String? ??
           '',
@@ -221,4 +222,3 @@ class JobMessage {
   final String text;
   final DateTime createdAt;
 }
-  
