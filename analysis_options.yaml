@@ -18,6 +18,10 @@ analyzer:
     - windows/**
     - macos/**
     - linux/**
+    # Node projects (rules tests, Cloud Functions) ship Dart templates in
+    # node_modules that are not part of the app.
+    - rules-tests/**
+    - functions/**
 
 linter:
   # The lint rules applied to this project can be customized in the

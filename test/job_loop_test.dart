@@ -1,0 +1,187 @@
+import 'package:fake_cloud_firestore/fake_cloud_firestore.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+import 'package:fixnear/core/models/marketplace_models.dart';
+import 'package:fixnear/core/services/marketplace_service.dart';
+
+/// Runs the whole job loop through the real [FirestoreMarketplaceRepository]
+/// (transactions, status checks and payment rules) on an in-memory Firestore.
+/// Security rules are covered separately by rules-tests/ in the emulator.
+void main() {
+  late FakeFirebaseFirestore firestore;
+  late FirestoreMarketplaceRepository repository;
+
+  const customer = 'customer-1';
+  const provider = 'provider-1';
+  const otherProvider = 'provider-2';
+
+  setUp(() {
+    firestore = FakeFirebaseFirestore();
+    repository = FirestoreMarketplaceRepository(firestore: firestore);
+  });
+
+  Future<ServiceRequest> onlyRequest() async =>
+      (await repository.watchCustomerRequests(customer).first).single;
+
+  test('post → quote → book → every status → confirm → cash paid', () async {
+    await repository.createRequest(
+      customerUid: customer,
+      customerName: 'Casey Customer',
+      category: 'Plumbing',
+      description: 'Fix a leaking kitchen faucet',
+      serviceArea: 'Davao City',
+      locationLabel: 'Home',
+      latitude: 7.0731,
+      longitude: 125.6128,
+      scheduledAt: DateTime(2026, 10, 2, 9),
+    );
+    var job = await onlyRequest();
+    expect(job.status, RequestStatus.requested);
+    expect(job.latitude, 7.0731);
+
+    final board = await repository.watchOpenRequests(provider).first;
+    expect(board.map((r) => r.id), [job.id]);
+
+    await repository.sendQuote(
+      requestId: job.id,
+      providerUid: provider,
+      providerName: 'Pat Provider',
+      price: 850,
+      note: 'Parts and labor included',
+    );
+    await repository.sendQuote(
+      requestId: job.id,
+      providerUid: otherProvider,
+      providerName: 'Quinn Provider',
+      price: 990,
+      note: 'Can come today',
+    );
+    // A revised quote replaces the provider's earlier one.
+    await repository.sendQuote(
+      requestId: job.id,
+      providerUid: provider,
+      providerName: 'Pat Provider',
+      price: 800,
+      note: 'Parts and labor included',
+    );
+    expect((await onlyRequest()).status, RequestStatus.quoted);
+
+    final quotes = await repository.watchQuotes(job.id).first;
+    expect(quotes, hasLength(2));
+    final chosen = quotes.firstWhere((q) => q.providerUid == provider);
+    expect(chosen.price, 800);
+
+    await repository.acceptQuote(job.id, chosen);
+    job = await onlyRequest();
+    expect(job.status, RequestStatus.accepted);
+    expect(job.providerUid, provider);
+    expect(job.quotedPrice, 800);
+    expect(await repository.watchOpenRequests(otherProvider).first, isEmpty);
+
+    await repository.sendMessage(
+      requestId: job.id,
+      senderUid: customer,
+      senderName: 'Casey Customer',
+      text: 'Gate code is 1234',
+    );
+    expect(await repository.watchMessages(job.id).first, hasLength(1));
+
+    for (final status in [
+      RequestStatus.onTheWay,
+      RequestStatus.arrived,
+      RequestStatus.inProgress,
+      RequestStatus.providerCompleted,
+    ]) {
+      await repository.advanceRequest(job.id, status);
+      expect((await onlyRequest()).status, status);
+    }
+
+    await repository.confirmCompletion(job.id, customer);
+    expect((await onlyRequest()).status, RequestStatus.completed);
+
+    await repository.recordCashPayment(job.id, customer);
+    expect(
+      (await onlyRequest()).paymentStatus,
+      'pending_provider_confirmation',
+    );
+    await repository.confirmCashPayment(job.id, provider);
+    expect((await onlyRequest()).paymentStatus, 'paid');
+
+    final providerJobs = await repository.watchProviderJobs(provider).first;
+    expect(providerJobs.single.paymentStatus, 'paid');
+  });
+
+  test('the repository refuses out-of-order steps', () async {
+    await repository.createRequest(
+      customerUid: customer,
+      customerName: 'Casey Customer',
+      category: 'Plumbing',
+      description: 'Fix a leaking kitchen faucet',
+      serviceArea: 'Davao City',
+      scheduledAt: DateTime(2026, 10, 2, 9),
+    );
+    final job = await onlyRequest();
+
+    // No quote accepted yet, so the job cannot move.
+    await expectLater(
+      () => repository.advanceRequest(job.id, RequestStatus.onTheWay),
+      throwsStateError,
+    );
+    await expectLater(
+      () => repository.confirmCompletion(job.id, customer),
+      throwsStateError,
+    );
+    await expectLater(
+      () => repository.recordCashPayment(job.id, customer),
+      throwsStateError,
+    );
+
+    await repository.sendQuote(
+      requestId: job.id,
+      providerUid: provider,
+      providerName: 'Pat Provider',
+      price: 850,
+      note: 'Parts and labor included',
+    );
+    await repository.acceptQuote(
+      job.id,
+      (await repository.watchQuotes(job.id).first).single,
+    );
+
+    // Skipping from accepted straight to arrived.
+    await expectLater(
+      () => repository.advanceRequest(job.id, RequestStatus.arrived),
+      throwsStateError,
+    );
+    // Quoting a job that is already booked.
+    await expectLater(
+      () => repository.sendQuote(
+        requestId: job.id,
+        providerUid: otherProvider,
+        providerName: 'Quinn Provider',
+        price: 700,
+        note: 'Cheaper',
+      ),
+      throwsStateError,
+    );
+  });
+
+  test('declined jobs leave that provider’s board only', () async {
+    await repository.createRequest(
+      customerUid: customer,
+      customerName: 'Casey Customer',
+      category: 'Cleaning',
+      description: 'Deep clean the living room',
+      serviceArea: 'Davao City',
+      scheduledAt: DateTime(2026, 10, 2, 9),
+    );
+    final job = await onlyRequest();
+    await repository.declineRequest(job.id, provider);
+
+    expect(await repository.watchOpenRequests(provider).first, isEmpty);
+    expect(
+      (await repository.watchOpenRequests(otherProvider).first).single.id,
+      job.id,
+    );
+  });
+}
