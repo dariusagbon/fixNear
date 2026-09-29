@@ -1,0 +1,225 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedInProvider() {
+      return request.auth != null
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'provider';
+    }
+
+    match /users/{userId} {
+      allow create: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.keys().hasAll(['email', 'name', 'role', 'createdAt'])
+        && request.resource.data.keys().hasOnly([
+          'email', 'name', 'role', 'phone', 'photoUrl', 'createdAt'
+        ])
+        && request.resource.data.email is string
+        && request.resource.data.name is string
+        && request.resource.data.role in ['customer', 'provider']
+        && request.resource.data.createdAt is timestamp;
+
+      allow read: if request.auth != null && request.auth.uid == userId;
+
+      allow update: if request.auth != null
+        && request.auth.uid == userId
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'phone', 'photoUrl'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /providerProfiles/{providerId} {
+      allow create: if request.auth != null
+        && request.auth.uid == providerId
+        && getAfter(/databases/$(database)/documents/users/$(providerId)).data.role == 'provider'
+        && request.resource.data.keys().hasOnly([
+          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable', 'createdAt'
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.category is string
+        && request.resource.data.serviceArea is string
+        && request.resource.data.startingPrice is int
+        && request.resource.data.startingPrice >= 0
+        && request.resource.data.isAvailable is bool
+        && request.resource.data.createdAt is timestamp;
+
+      allow read: if request.auth != null
+        && (request.auth.uid == providerId || resource.data.isAvailable == true);
+
+      allow update: if request.auth != null
+        && request.auth.uid == providerId
+        && signedInProvider()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable'
+        ]);
+
+      allow delete: if false;
+    }
+
+    match /serviceRequests/{requestId} {
+      allow create: if request.auth != null
+        && request.resource.data.customerUid == request.auth.uid
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'customer'
+        && request.resource.data.keys().hasOnly([
+          'customerUid', 'customerName', 'category', 'description', 'serviceArea',
+          'providerUid', 'providerName', 'status', 'scheduledAt', 'photoUrls',
+          'declinedProviderUids', 'paymentStatus', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.customerName is string
+        && request.resource.data.category is string
+        && request.resource.data.description is string
+        && request.resource.data.serviceArea is string
+        && (request.resource.data.providerUid == null || request.resource.data.providerUid is string)
+        && (request.resource.data.providerName == null || request.resource.data.providerName is string)
+        && (request.resource.data.providerUid == null
+          || get(/databases/$(database)/documents/providerProfiles/$(request.resource.data.providerUid)).data.isAvailable == true)
+        && request.resource.data.status == 'requested'
+        && request.resource.data.scheduledAt is timestamp
+        && request.resource.data.photoUrls is list
+        && request.resource.data.declinedProviderUids == []
+        && request.resource.data.paymentStatus == 'unpaid'
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+
+      allow read: if request.auth != null
+        && (resource.data.customerUid == request.auth.uid
+          || (signedInProvider()
+            && (resource.data.providerUid == request.auth.uid
+              || (resource.data.status in ['requested', 'quoted']
+                && (resource.data.providerUid == null
+                  || resource.data.providerUid == request.auth.uid)))));
+
+      allow update: if request.auth != null
+        && ((resource.data.customerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.status == 'cancelled'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt is timestamp)
+          || (resource.data.customerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.status == 'accepted'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'providerUid', 'providerName', 'quotedPrice', 'quoteNote', 'status', 'updatedAt'
+            ])
+            && request.resource.data.providerUid is string
+            && request.resource.data.quotedPrice is int
+            && request.resource.data.quoteNote is string
+            && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/quotes/$(request.resource.data.providerUid)).data.status == 'accepted'
+            && request.resource.data.updatedAt is timestamp)
+          || (signedInProvider()
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.status == 'quoted'
+            && (resource.data.providerUid == null
+              || resource.data.providerUid == request.auth.uid)
+            && !resource.data.declinedProviderUids.hasAny([request.auth.uid])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/quotes/$(request.auth.uid)).data.status == 'sent'
+            && request.resource.data.updatedAt is timestamp)
+          || (signedInProvider()
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'declinedProviderUids', 'updatedAt'
+            ])
+            && request.resource.data.declinedProviderUids.hasAll(resource.data.declinedProviderUids)
+            && request.resource.data.declinedProviderUids.hasAny([request.auth.uid])
+            && request.resource.data.declinedProviderUids.size() <= resource.data.declinedProviderUids.size() + 1
+            && request.resource.data.updatedAt is timestamp)
+          || (signedInProvider()
+            && request.auth.uid == resource.data.providerUid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt is timestamp
+            && ((resource.data.status == 'accepted' && request.resource.data.status == 'on_the_way')
+              || (resource.data.status == 'on_the_way' && request.resource.data.status == 'arrived')
+              || (resource.data.status == 'arrived' && request.resource.data.status == 'in_progress')
+              || (resource.data.status == 'in_progress' && request.resource.data.status == 'provider_completed')))
+          || (request.auth.uid == resource.data.customerUid
+            && resource.data.status == 'provider_completed'
+            && request.resource.data.status == 'completed'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.updatedAt is timestamp)
+          || (request.auth.uid == resource.data.customerUid
+            && resource.data.status == 'completed'
+            && resource.data.paymentStatus == 'unpaid'
+            && request.resource.data.paymentMethod == 'cash'
+            && request.resource.data.paymentStatus == 'pending_provider_confirmation'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'paymentMethod', 'paymentStatus', 'updatedAt'
+            ])
+            && request.resource.data.updatedAt is timestamp)
+          || (signedInProvider()
+            && request.auth.uid == resource.data.providerUid
+            && resource.data.status == 'completed'
+            && resource.data.paymentStatus == 'pending_provider_confirmation'
+            && request.resource.data.paymentStatus == 'paid'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'paymentStatus', 'paidAt', 'updatedAt'
+            ])
+            && request.resource.data.paidAt is timestamp
+            && request.resource.data.updatedAt is timestamp));
+
+      allow delete: if false;
+
+      match /quotes/{providerId} {
+        allow read: if request.auth != null
+          && (get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.customerUid == request.auth.uid
+            || request.auth.uid == providerId);
+
+        allow create: if signedInProvider()
+          && request.auth.uid == providerId
+          && get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.status in ['requested', 'quoted']
+          && (get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.providerUid == null
+            || get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.providerUid == providerId)
+          && request.resource.data.keys().hasOnly([
+            'providerUid', 'providerName', 'price', 'note', 'status', 'createdAt'
+          ])
+          && request.resource.data.providerUid == providerId
+          && request.resource.data.price is int
+          && request.resource.data.price > 0
+          && request.resource.data.note is string
+          && request.resource.data.status == 'sent'
+          && request.resource.data.createdAt is timestamp;
+
+        allow update: if request.auth != null
+          && get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.customerUid == request.auth.uid
+          && resource.data.status == 'sent'
+          && request.resource.data.status == 'accepted'
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+
+        allow delete: if false;
+      }
+
+      match /messages/{messageId} {
+        function isParticipant() {
+          let serviceRequest = get(/databases/$(database)/documents/serviceRequests/$(requestId)).data;
+          return request.auth != null
+            && (request.auth.uid == serviceRequest.customerUid
+              || request.auth.uid == serviceRequest.providerUid);
+        }
+
+        allow read: if isParticipant();
+
+        allow create: if isParticipant()
+          && request.resource.data.keys().hasOnly([
+            'senderUid', 'senderName', 'text', 'createdAt'
+          ])
+          && request.resource.data.senderUid == request.auth.uid
+          && request.resource.data.senderName is string
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 1000
+          && request.resource.data.createdAt is timestamp;
+
+        allow update, delete: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "36315507942",
+    "project_id": "fixnear-d5c1c",
+    "storage_bucket": "fixnear-d5c1c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:36315507942:android:06545673d4bab4a70d9f27",
+        "android_client_info": {
+          "package_name": "com.example.fixnear"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCssJkTBXs6g5pFem5wRkDrXlX8LuVRDng"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
