@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../customer/customer_marketplace_screen.dart';
 import '../provider/provider_home_screen.dart';
@@ -18,6 +19,7 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   final AuthService _authService = AuthService();
   final MarketplaceRepository _marketplace = FirestoreMarketplaceRepository();
+  final ImageUploader _imageUploader = CloudinaryService();
   late final Stream<User?> _authStateChanges = _authService.authStateChanges();
 
   @override
@@ -74,6 +76,15 @@ class _AuthGateState extends State<AuthGate> {
                 customerName: profile.name,
                 repository: _marketplace,
                 onSignOut: _authService.signOut,
+                profile: profile,
+                imageUploader: _imageUploader,
+                onSaveProfile: ({required name, phone, photoUrl}) =>
+                    _authService.updateProfile(
+                      uid: profile.id,
+                      name: name,
+                      phone: phone,
+                      photoUrl: photoUrl,
+                    ),
               ),
               UserRole.provider => ProviderHomeScreen(
                 providerUid: profile.id,

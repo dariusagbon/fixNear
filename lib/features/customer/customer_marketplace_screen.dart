@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 
+import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
+import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
+import '../profile/edit_profile_screen.dart';
 
 class CustomerMarketplaceScreen extends StatefulWidget {
   const CustomerMarketplaceScreen({
@@ -14,6 +18,10 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     required this.customerName,
     required this.repository,
     this.onSignOut,
+    this.profile,
+    this.imageUploader,
+    this.onSaveProfile,
+    this.pickPhoto = pickPhotoWithImagePicker,
     super.key,
   });
 
@@ -21,6 +29,13 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   final String customerName;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
+
+  /// The signed-in customer's profile. Profile editing is available when this,
+  /// [imageUploader] and [onSaveProfile] are all provided.
+  final AppUser? profile;
+  final ImageUploader? imageUploader;
+  final ProfileSaver? onSaveProfile;
+  final PhotoPicker pickPhoto;
 
   @override
   State<CustomerMarketplaceScreen> createState() =>
@@ -88,6 +103,15 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                 tooltip: 'My requests',
                 onPressed: () => setState(() => _selectedTab = 1),
                 icon: const Icon(Icons.notifications_none_rounded),
+              ),
+              IconButton(
+                tooltip: 'Account',
+                onPressed: () => setState(() => _selectedTab = 2),
+                icon: ProfileAvatar(
+                  name: widget.customerName,
+                  photoUrl: widget.profile?.photoUrl,
+                  radius: 16,
+                ),
               ),
             ],
           ),
@@ -310,37 +334,78 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Widget _buildAccount() {
-    return Center(
-      child: Padding(
+    final profile = widget.profile;
+    final canEdit =
+        profile != null &&
+        widget.imageUploader != null &&
+        widget.onSaveProfile != null;
+    final textTheme = Theme.of(context).textTheme;
+    return ContentWidth(
+      maxWidth: 480,
+      child: ListView(
         padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 34,
-              child: Text(
-                initialsFor(widget.customerName),
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                ),
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: ProfileAvatar(
+              name: widget.customerName,
+              photoUrl: profile?.photoUrl,
+              radius: 44,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            widget.customerName,
+            textAlign: TextAlign.center,
+            style: textTheme.titleLarge,
+          ),
+          const SizedBox(height: 4),
+          const Text('Customer account', textAlign: TextAlign.center),
+          const SizedBox(height: 20),
+          if (profile != null)
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.email_outlined),
+                    title: const Text('Email'),
+                    subtitle: Text(profile.email),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.phone_outlined),
+                    title: const Text('Phone'),
+                    subtitle: Text(profile.phone ?? 'Not added'),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            Text(
-              widget.customerName,
-              style: Theme.of(context).textTheme.titleLarge,
+          const SizedBox(height: 20),
+          if (canEdit)
+            FilledButton.icon(
+              onPressed: () => _openEditProfile(profile),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit profile'),
             ),
-            const SizedBox(height: 4),
-            const Text('Customer account'),
-            const SizedBox(height: 20),
-            if (widget.onSignOut != null)
-              OutlinedButton.icon(
-                onPressed: widget.onSignOut,
-                icon: const Icon(Icons.logout_rounded),
-                label: const Text('Sign out'),
-              ),
-          ],
+          const SizedBox(height: 10),
+          if (widget.onSignOut != null)
+            OutlinedButton.icon(
+              onPressed: widget.onSignOut,
+              icon: const Icon(Icons.logout_rounded),
+              label: const Text('Sign out'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _openEditProfile(AppUser profile) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditProfileScreen(
+          profile: profile,
+          uploader: widget.imageUploader!,
+          onSave: widget.onSaveProfile!,
+          pickPhoto: widget.pickPhoto,
         ),
       ),
     );

@@ -2,7 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
+import 'package:fixnear/core/services/cloudinary_service.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
 import 'package:fixnear/core/utils/formatters.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
@@ -268,6 +270,37 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('This quote is no longer available.'), findsOneWidget);
+  });
+
+  testWidgets('customer account shows profile details and edit action', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CustomerMarketplaceScreen(
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          repository: _FakeMarketplaceRepository(),
+          profile: AppUser(
+            id: 'customer-1',
+            email: 'casey@example.com',
+            name: 'Casey Customer',
+            role: UserRole.customer,
+            phone: '09123456789',
+          ),
+          imageUploader: CloudinaryService(cloudName: '', uploadPreset: ''),
+          onSaveProfile: ({required name, phone, photoUrl}) async {},
+        ),
+      ),
+    );
+    await tester.tap(find.text('Account').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('casey@example.com'), findsOneWidget);
+    expect(find.text('09123456789'), findsOneWidget);
+    await tester.tap(find.text('Edit profile'));
+    await tester.pumpAndSettle();
+    expect(find.text('Save changes'), findsOneWidget);
   });
 
   test('formatters produce readable values', () {

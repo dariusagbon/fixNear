@@ -87,6 +87,24 @@ class AuthService {
     return AppUser.fromMap(snapshot.data()!, snapshot.id);
   }
 
+  /// Updates the editable fields of a user's profile. Firestore rules only
+  /// allow a user to change their own name, phone and photo.
+  Future<void> updateProfile({
+    required String uid,
+    required String name,
+    String? phone,
+    String? photoUrl,
+  }) async {
+    final trimmedPhone = phone?.trim();
+    await _firestore.collection('users').doc(uid).update({
+      'name': name.trim(),
+      'phone': trimmedPhone == null || trimmedPhone.isEmpty
+          ? null
+          : trimmedPhone,
+      'photoUrl': photoUrl,
+    });
+  }
+
   Stream<AppUser?> userProfileChanges(String uid) {
     return _firestore.collection('users').doc(uid).snapshots().map((snapshot) {
       final data = snapshot.data();

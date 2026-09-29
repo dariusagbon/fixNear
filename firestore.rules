@@ -28,7 +28,17 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'phone', 'photoUrl'
-        ]);
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && (request.resource.data.get('phone', null) == null
+          || (request.resource.data.phone is string
+            && request.resource.data.phone.size() <= 20))
+        && (request.resource.data.get('photoUrl', null) == null
+          || (request.resource.data.photoUrl is string
+            && request.resource.data.photoUrl.size() <= 500
+            && request.resource.data.photoUrl.matches('^https://res[.]cloudinary[.]com/.+')));
 
       allow delete: if false;
     }
