@@ -9,6 +9,7 @@ class AppTheme {
   static const Color textSecondary = Color(0xFF5F6F85);
   static const Color successGreen = Color(0xFF1D8D63);
   static const Color warningAmber = Color(0xFFF6B445);
+  static const Color borderSubtle = Color(0xFFE2E8F0);
 
   static ThemeData get lightTheme {
     return ThemeData(
@@ -34,15 +35,71 @@ class AppTheme {
           letterSpacing: -0.5,
           color: textPrimary,
         ),
-        bodyMedium: const TextStyle(
-          fontSize: 14,
-          color: textSecondary,
-        ),
+        bodyMedium: const TextStyle(fontSize: 14, color: textSecondary),
       ),
       appBarTheme: const AppBarTheme(
         backgroundColor: neutralBg,
         foregroundColor: textPrimary,
         elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
+      cardTheme: CardThemeData(
+        color: surfaceWhite,
+        elevation: 0,
+        margin: EdgeInsets.zero,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+          side: const BorderSide(color: borderSubtle),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: surfaceWhite,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 14,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: borderSubtle),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: borderSubtle),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(14),
+          borderSide: const BorderSide(color: primaryBlue, width: 1.5),
+        ),
+      ),
+      filledButtonTheme: FilledButtonThemeData(
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+          textStyle: const TextStyle(fontWeight: FontWeight.w600),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 46),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+      chipTheme: ChipThemeData(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+        side: const BorderSide(color: borderSubtle),
+      ),
+      navigationBarTheme: const NavigationBarThemeData(
+        backgroundColor: surfaceWhite,
+        elevation: 0,
+      ),
+      snackBarTheme: const SnackBarThemeData(
+        behavior: SnackBarBehavior.floating,
       ),
     );
   }

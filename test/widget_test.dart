@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fixnear/core/models/marketplace_models.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
+import 'package:fixnear/core/utils/formatters.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
 import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
 import 'package:fixnear/features/provider/provider_home_screen.dart';
@@ -156,12 +157,135 @@ void main() {
     await tester.tap(find.text('Requests'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Provider Two · ₱1200'), findsOneWidget);
+    expect(find.text('Provider Two · ₱1,200'), findsOneWidget);
     await tester.tap(find.text('Accept'));
     await tester.pumpAndSettle();
 
     expect(repository.acceptedRequestId, 'request-2');
     expect(repository.acceptedQuote?.providerUid, 'provider-2');
+  });
+
+  testWidgets('provider jobs tab shows an empty state with no jobs', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: ProviderHomeScreen(
+          providerUid: 'provider-1',
+          providerName: 'Provider One',
+          repository: _FakeMarketplaceRepository(),
+        ),
+      ),
+    );
+    await tester.tap(find.text('My jobs'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Confirmed earnings'), findsOneWidget);
+    expect(find.text('Accepted jobs will appear here.'), findsOneWidget);
+  });
+
+  testWidgets('customer confirms before cancelling a request', (
+    WidgetTester tester,
+  ) async {
+    final repository = _FakeMarketplaceRepository()
+      ..customerRequests = [
+        ServiceRequest(
+          id: 'request-3',
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          category: 'Cleaning',
+          description: 'Deep clean the living room',
+          serviceArea: 'Davao City',
+          status: RequestStatus.requested,
+          createdAt: DateTime(2026),
+        ),
+      ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CustomerMarketplaceScreen(
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          repository: repository,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Requests'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Cancel request'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Keep request'));
+    await tester.pumpAndSettle();
+    expect(repository.cancelledRequestId, isNull);
+
+    await tester.tap(find.text('Cancel request'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel request').last);
+    await tester.pumpAndSettle();
+    expect(repository.cancelledRequestId, 'request-3');
+  });
+
+  testWidgets('failed quote acceptance shows a friendly message', (
+    WidgetTester tester,
+  ) async {
+    final repository = _FakeMarketplaceRepository()
+      ..acceptQuoteError = StateError('This quote is no longer available.')
+      ..customerRequests = [
+        ServiceRequest(
+          id: 'request-4',
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          category: 'Electrical',
+          description: 'Install an outlet',
+          serviceArea: 'Davao City',
+          status: RequestStatus.quoted,
+          createdAt: DateTime(2026),
+        ),
+      ]
+      ..quotesByRequest['request-4'] = [
+        ProviderQuote(
+          providerUid: 'provider-2',
+          providerName: 'Provider Two',
+          price: 600,
+          note: 'Same-day install.',
+          createdAt: DateTime(2026),
+        ),
+      ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: CustomerMarketplaceScreen(
+          customerUid: 'customer-1',
+          customerName: 'Casey Customer',
+          repository: repository,
+        ),
+      ),
+    );
+    await tester.tap(find.text('Requests'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Accept'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('This quote is no longer available.'), findsOneWidget);
+  });
+
+  test('formatters produce readable values', () {
+    expect(formatPeso(0), '₱0');
+    expect(formatPeso(850), '₱850');
+    expect(formatPeso(1200), '₱1,200');
+    expect(formatPeso(1234567), '₱1,234,567');
+    expect(
+      formatDateTime(DateTime(2026, 3, 4, 14, 5)),
+      'Mar 4, 2026 · 2:05 PM',
+    );
+    expect(
+      formatDateTime(DateTime(2026, 12, 25, 0, 30)),
+      'Dec 25, 2026 · 12:30 AM',
+    );
+    expect(requestStatusLabel(RequestStatus.onTheWay), 'On the way');
+    expect(initialsFor('Casey Customer'), 'CC');
+    expect(initialsFor('  '), '?');
   });
 
   test('service requests preserve selected location data', () {
@@ -197,6 +321,8 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   final Map<String, List<ProviderQuote>> quotesByRequest = {};
   String? acceptedRequestId;
   ProviderQuote? acceptedQuote;
+  Object? acceptQuoteError;
+  String? cancelledRequestId;
 
   @override
   Stream<List<ProviderProfile>> watchProviders() => Stream.value([
@@ -220,7 +346,7 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
 
   @override
   Stream<List<ServiceRequest>> watchProviderJobs(String providerUid) =>
-      const Stream.empty();
+      Stream.value(const []);
 
   @override
   Stream<List<ProviderQuote>> watchQuotes(String requestId) =>
@@ -251,7 +377,9 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   }
 
   @override
-  Future<void> cancelRequest(String requestId) async {}
+  Future<void> cancelRequest(String requestId) async {
+    cancelledRequestId = requestId;
+  }
 
   @override
   Future<void> declineRequest(String requestId, String providerUid) async {}
@@ -271,6 +399,7 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
 
   @override
   Future<void> acceptQuote(String requestId, ProviderQuote quote) async {
+    if (acceptQuoteError != null) throw acceptQuoteError!;
     acceptedRequestId = requestId;
     acceptedQuote = quote;
   }

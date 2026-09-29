@@ -4,6 +4,8 @@ import 'package:geolocator/geolocator.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/formatters.dart';
+import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
 class CustomerMarketplaceScreen extends StatefulWidget {
@@ -71,211 +73,239 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Widget _buildDiscover() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-      children: [
-        Row(
-          children: [
-            const Icon(Icons.handyman_rounded, color: AppTheme.primaryBlue),
-            const SizedBox(width: 8),
-            Text('FixNear', style: Theme.of(context).textTheme.titleLarge),
-            const Spacer(),
-            IconButton(
-              tooltip: 'My requests',
-              onPressed: () => setState(() => _selectedTab = 1),
-              icon: const Icon(Icons.notifications_none_rounded),
-            ),
-          ],
-        ),
-        const SizedBox(height: 18),
-        Text(
-          'What can we help you with?',
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-            fontWeight: FontWeight.w800,
-            color: AppTheme.textPrimary,
-          ),
-        ),
-        const SizedBox(height: 16),
-        TextField(
-          controller: _searchController,
-          onChanged: (_) => setState(() {}),
-          decoration: InputDecoration(
-            hintText: 'Search services or providers',
-            prefixIcon: const Icon(Icons.search_rounded),
-            suffixIcon: _searchController.text.isEmpty
-                ? null
-                : IconButton(
-                    tooltip: 'Clear search',
-                    onPressed: () {
-                      _searchController.clear();
-                      setState(() {});
-                    },
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 18),
-        SizedBox(
-          height: 90,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: serviceCategories.length + 1,
-            separatorBuilder: (_, _) => const SizedBox(width: 10),
-            itemBuilder: (context, index) {
-              final category = index == 0 ? null : serviceCategories[index - 1];
-              final selected = category == _selectedCategory;
-              final label = category ?? 'All';
-              return ChoiceChip(
-                selected: selected,
-                label: Text(label),
-                avatar: Icon(
-                  _categoryIcon(category),
-                  size: 18,
-                  color: selected ? Colors.white : AppTheme.primaryBlue,
-                ),
-                onSelected: (_) => setState(() => _selectedCategory = category),
-              );
-            },
-          ),
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Available providers',
-                style: Theme.of(context).textTheme.titleLarge,
+    final firstName = widget.customerName.trim().split(RegExp(r'\s+')).first;
+    return ContentWidth(
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.handyman_rounded, color: AppTheme.primaryBlue),
+              const SizedBox(width: 8),
+              Text('FixNear', style: Theme.of(context).textTheme.titleLarge),
+              const Spacer(),
+              IconButton(
+                tooltip: 'My requests',
+                onPressed: () => setState(() => _selectedTab = 1),
+                icon: const Icon(Icons.notifications_none_rounded),
               ),
-            ),
-            TextButton.icon(
-              onPressed: () => _showRequestForm(),
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Request service'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        StreamBuilder<List<ProviderProfile>>(
-          stream: widget.repository.watchProviders(),
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              return const _InlineMessage(
-                icon: Icons.cloud_off_outlined,
-                message: 'Could not load providers. Check your connection and try again.',
-              );
-            }
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Padding(
-                padding: EdgeInsets.all(32),
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-
-            final query = _searchController.text.trim().toLowerCase();
-            final providers = (snapshot.data ?? const <ProviderProfile>[])
-                .where((provider) {
-                  final matchesCategory =
-                      _selectedCategory == null ||
-                      provider.category == _selectedCategory;
-                  final matchesQuery =
-                      query.isEmpty ||
-                      provider.name.toLowerCase().contains(query) ||
-                      provider.category.toLowerCase().contains(query) ||
-                      provider.serviceArea.toLowerCase().contains(query);
-                  return matchesCategory && matchesQuery;
-                })
-                .toList();
-
-            if (providers.isEmpty) {
-              return const _InlineMessage(
-                icon: Icons.search_off_rounded,
-                message: 'No providers match this search yet. Try another category or send a service request.',
-              );
-            }
-
-            return Column(
-              children: providers
-                  .map(
-                    (provider) => _ProviderCard(
-                      provider: provider,
-                      onRequest: () => _showRequestForm(provider: provider),
-                    ),
-                  )
-                  .toList(),
-            );
-          },
-        ),
-      ],
-    );
-  }
-
-  Widget _buildRequests() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
-          child: Text(
-            'My requests',
-            style: Theme.of(context).textTheme.titleLarge,
+            ],
           ),
-        ),
-        Expanded(
-          child: StreamBuilder<List<ServiceRequest>>(
-            stream: widget.repository.watchCustomerRequests(widget.customerUid),
+          const SizedBox(height: 18),
+          if (firstName.isNotEmpty)
+            Text(
+              'Hi, $firstName',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          const SizedBox(height: 4),
+          Text(
+            'What can we help you with?',
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              fontWeight: FontWeight.w800,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 16),
+          TextField(
+            controller: _searchController,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              hintText: 'Search services or providers',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _searchController.text.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () {
+                        _searchController.clear();
+                        setState(() {});
+                      },
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+            ),
+          ),
+          const SizedBox(height: 18),
+          SizedBox(
+            height: 48,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: serviceCategories.length + 1,
+              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              itemBuilder: (context, index) {
+                final category = index == 0
+                    ? null
+                    : serviceCategories[index - 1];
+                final selected = category == _selectedCategory;
+                final label = category ?? 'All';
+                return ChoiceChip(
+                  selected: selected,
+                  label: Text(label),
+                  avatar: Icon(
+                    _categoryIcon(category),
+                    size: 18,
+                    color: selected ? Colors.white : AppTheme.primaryBlue,
+                  ),
+                  showCheckmark: false,
+                  onSelected: (_) =>
+                      setState(() => _selectedCategory = category),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Available providers',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => _showRequestForm(),
+                icon: const Icon(Icons.add_rounded),
+                label: const Text('Request service'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          StreamBuilder<List<ProviderProfile>>(
+            stream: widget.repository.watchProviders(),
             builder: (context, snapshot) {
               if (snapshot.hasError) {
                 return const _InlineMessage(
                   icon: Icons.cloud_off_outlined,
-                  message: 'Could not load your requests.',
+                  message: 'Could not load providers. Check your connection and try again.',
                 );
               }
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(child: CircularProgressIndicator());
-              }
-
-              final requests = snapshot.data ?? const <ServiceRequest>[];
-              if (requests.isEmpty) {
-                return const _InlineMessage(
-                  icon: Icons.receipt_long_outlined,
-                  message: 'Your service requests will appear here.',
+                return const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: CircularProgressIndicator()),
                 );
               }
 
-              return ListView.separated(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                itemCount: requests.length,
-                separatorBuilder: (_, _) => const SizedBox(height: 10),
-                itemBuilder: (context, index) => _CustomerRequestCard(
-                  request: requests[index],
-                  quotes: widget.repository.watchQuotes(requests[index].id),
-                  onAcceptQuote: (quote) =>
-                      widget.repository.acceptQuote(requests[index].id, quote),
-                  onCancel: () => _cancelRequest(requests[index]),
-                  onConfirmCompletion: () =>
-                      widget.repository.confirmCompletion(
-                        requests[index].id,
-                        widget.customerUid,
+              final query = _searchController.text.trim().toLowerCase();
+              final providers = (snapshot.data ?? const <ProviderProfile>[])
+                  .where((provider) {
+                    final matchesCategory =
+                        _selectedCategory == null ||
+                        provider.category == _selectedCategory;
+                    final matchesQuery =
+                        query.isEmpty ||
+                        provider.name.toLowerCase().contains(query) ||
+                        provider.category.toLowerCase().contains(query) ||
+                        provider.serviceArea.toLowerCase().contains(query);
+                    return matchesCategory && matchesQuery;
+                  })
+                  .toList();
+
+              if (providers.isEmpty) {
+                return const _InlineMessage(
+                  icon: Icons.search_off_rounded,
+                  message: 'No providers match this search yet. Try another category or send a service request.',
+                );
+              }
+
+              return Column(
+                children: providers
+                    .map(
+                      (provider) => _ProviderCard(
+                        provider: provider,
+                        onRequest: () => _showRequestForm(provider: provider),
                       ),
-                  onOpenChat: requests[index].providerUid == null
-                      ? null
-                      : () => showJobChatSheet(
-                          context: context,
-                          requestId: requests[index].id,
-                          currentUid: widget.customerUid,
-                          currentName: widget.customerName,
-                          repository: widget.repository,
-                        ),
-                  onPayCash: () => widget.repository.recordCashPayment(
-                    requests[index].id,
-                    widget.customerUid,
-                  ),
-                ),
+                    )
+                    .toList(),
               );
             },
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRequests() {
+    return ContentWidth(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 20, 20, 12),
+            child: Text(
+              'My requests',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          Expanded(
+            child: StreamBuilder<List<ServiceRequest>>(
+              stream: widget.repository.watchCustomerRequests(
+                widget.customerUid,
+              ),
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return const _InlineMessage(
+                    icon: Icons.cloud_off_outlined,
+                    message: 'Could not load your requests.',
+                  );
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+
+                final requests = snapshot.data ?? const <ServiceRequest>[];
+                if (requests.isEmpty) {
+                  return const _InlineMessage(
+                    icon: Icons.receipt_long_outlined,
+                    message: 'Your service requests will appear here.',
+                  );
+                }
+
+                return ListView.separated(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                  itemCount: requests.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 10),
+                  itemBuilder: (context, index) => _CustomerRequestCard(
+                    request: requests[index],
+                    quotes: widget.repository.watchQuotes(requests[index].id),
+                    onAcceptQuote: (quote) => _runWithFeedback(
+                      () => widget.repository.acceptQuote(
+                        requests[index].id,
+                        quote,
+                      ),
+                      failureMessage: 'Could not accept this quote.',
+                      successMessage: 'Quote accepted.',
+                    ),
+                    onCancel: () => _cancelRequest(requests[index]),
+                    onConfirmCompletion: () => _runWithFeedback(
+                      () => widget.repository.confirmCompletion(
+                        requests[index].id,
+                        widget.customerUid,
+                      ),
+                      failureMessage: 'Could not confirm completion.',
+                    ),
+                    onOpenChat: requests[index].providerUid == null
+                        ? null
+                        : () => showJobChatSheet(
+                            context: context,
+                            requestId: requests[index].id,
+                            currentUid: widget.customerUid,
+                            currentName: widget.customerName,
+                            repository: widget.repository,
+                          ),
+                    onPayCash: () => _runWithFeedback(
+                      () => widget.repository.recordCashPayment(
+                        requests[index].id,
+                        widget.customerUid,
+                      ),
+                      failureMessage: 'Could not record cash payment.',
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -286,15 +316,23 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const CircleAvatar(
+            CircleAvatar(
               radius: 34,
-              child: Icon(Icons.person_rounded, size: 36),
+              child: Text(
+                initialsFor(widget.customerName),
+                style: const TextStyle(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
             const SizedBox(height: 12),
             Text(
               widget.customerName,
               style: Theme.of(context).textTheme.titleLarge,
             ),
+            const SizedBox(height: 4),
+            const Text('Customer account'),
             const SizedBox(height: 20),
             if (widget.onSignOut != null)
               OutlinedButton.icon(
@@ -316,16 +354,16 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       builder: (context) => _NewRequestSheet(
         initialCategory: provider?.category ?? _selectedCategory,
         provider: provider,
-        onSubmit: (
-          category,
-          description,
-          area,
-          locationLabel,
-          latitude,
-          longitude,
-          scheduledAt,
-        ) =>
-            widget.repository.createRequest(
+        onSubmit:
+            (
+              category,
+              description,
+              area,
+              locationLabel,
+              latitude,
+              longitude,
+              scheduledAt,
+            ) => widget.repository.createRequest(
               customerUid: widget.customerUid,
               customerName: widget.customerName,
               category: category,
@@ -347,12 +385,48 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Future<void> _cancelRequest(ServiceRequest request) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Cancel this request?'),
+        content: Text(
+          'Providers will no longer see your ${request.category.toLowerCase()} request.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Keep request'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Cancel request'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await _runWithFeedback(
+      () => widget.repository.cancelRequest(request.id),
+      failureMessage: 'Could not cancel this request.',
+      successMessage: 'Request cancelled.',
+    );
+  }
+
+  Future<void> _runWithFeedback(
+    Future<void> Function() action, {
+    required String failureMessage,
+    String? successMessage,
+  }) async {
     try {
-      await widget.repository.cancelRequest(request.id);
-    } catch (_) {
+      await action();
+      if (successMessage != null && mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(successMessage)));
+      }
+    } catch (error) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not cancel this request.')),
+        SnackBar(content: Text(friendlyErrorMessage(error, failureMessage))),
       );
     }
   }
@@ -386,7 +460,7 @@ class _ProviderCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                const CircleAvatar(child: Icon(Icons.person_rounded)),
+                CircleAvatar(child: Text(initialsFor(provider.name))),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -418,7 +492,10 @@ class _ProviderCard extends StatelessWidget {
                 const Icon(Icons.location_on_outlined, size: 17),
                 const SizedBox(width: 4),
                 Expanded(child: Text(provider.serviceArea)),
-                Text('From ₱${provider.startingPrice}'),
+                Text(
+                  'From ${formatPeso(provider.startingPrice)}',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
               ],
             ),
             const SizedBox(height: 12),
@@ -472,18 +549,19 @@ class _CustomerRequestCard extends StatelessWidget {
                     style: Theme.of(context).textTheme.titleMedium,
                   ),
                 ),
-                Chip(label: Text(_statusLabel(request.status))),
+                StatusChip(status: request.status),
               ],
             ),
+            const SizedBox(height: 8),
             Text(request.description),
             const SizedBox(height: 6),
             Text('Area: ${request.serviceArea}'),
             if (request.scheduledAt != null)
-              Text('Scheduled: ${_formatDateTime(request.scheduledAt!)}'),
+              Text('Scheduled: ${formatDateTime(request.scheduledAt!)}'),
             if (request.providerName != null)
               Text('Provider: ${request.providerName}'),
             if (request.quotedPrice != null)
-              Text('Agreed quote: ₱${request.quotedPrice}'),
+              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
             if (onOpenChat != null && request.status != RequestStatus.cancelled)
               Align(
                 alignment: Alignment.centerRight,
@@ -513,7 +591,7 @@ class _CustomerRequestCard extends StatelessWidget {
                         ListTile(
                           contentPadding: EdgeInsets.zero,
                           title: Text(
-                            '${quote.providerName} · ₱${quote.price}',
+                            '${quote.providerName} · ${formatPeso(quote.price)}',
                           ),
                           subtitle: Text(quote.note),
                           trailing: FilledButton(
@@ -538,18 +616,7 @@ class _CustomerRequestCard extends StatelessWidget {
               Align(
                 alignment: Alignment.centerRight,
                 child: FilledButton.icon(
-                  onPressed: () async {
-                    try {
-                      await onPayCash();
-                    } catch (_) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Could not record cash payment.'),
-                        ),
-                      );
-                    }
-                  },
+                  onPressed: onPayCash,
                   icon: const Icon(Icons.payments_outlined),
                   label: const Text('Pay cash'),
                 ),
@@ -573,16 +640,6 @@ class _CustomerRequestCard extends StatelessWidget {
       ),
     );
   }
-
-  String _statusLabel(String status) => switch (status) {
-    RequestStatus.onTheWay => 'On the way',
-    RequestStatus.inProgress => 'In progress',
-    RequestStatus.providerCompleted => 'Awaiting confirmation',
-    _ => status[0].toUpperCase() + status.substring(1),
-  };
-
-  String _formatDateTime(DateTime dateTime) =>
-      '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
 }
 
 class _NewRequestSheet extends StatefulWidget {
@@ -684,7 +741,7 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
               title: Text(
                 _scheduledAt == null
                     ? 'Choose date and time'
-                    : _formatDateTime(_scheduledAt!),
+                    : formatDateTime(_scheduledAt!),
               ),
               trailing: const Icon(Icons.chevron_right_rounded),
               onTap: _chooseSchedule,
@@ -801,7 +858,9 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
           : permission;
       if (status == LocationPermission.denied ||
           status == LocationPermission.deniedForever) {
-        throw StateError('Location permission is required.');
+        throw StateError(
+          'Allow location access to pin your location, or type it instead.',
+        );
       }
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -819,7 +878,10 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
     } catch (error) {
       if (!mounted) return;
       setState(() {
-        _error = 'Could not access your current location. ${error.toString()}';
+        _error = friendlyErrorMessage(
+          error,
+          'Could not access your current location. Type it instead.',
+        );
       });
     }
   }
@@ -851,9 +913,6 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       _error = null;
     });
   }
-
-  String _formatDateTime(DateTime dateTime) =>
-      '${dateTime.year}-${dateTime.month.toString().padLeft(2, '0')}-${dateTime.day.toString().padLeft(2, '0')} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
 }
 
 class _InlineMessage extends StatelessWidget {

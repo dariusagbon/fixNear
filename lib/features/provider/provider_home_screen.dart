@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/formatters.dart';
+import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
 class ProviderHomeScreen extends StatelessWidget {
@@ -59,6 +62,9 @@ class ProviderHomeScreen extends StatelessWidget {
                   price: quote.price,
                   note: quote.note,
                 );
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context)
+                    .showSnackBar(const SnackBar(content: Text('Quote sent.')));
               },
               onDecline: (request) =>
                   repository.declineRequest(request.id, providerUid),
@@ -123,7 +129,10 @@ class _RequestList extends StatelessWidget {
       stream: requests,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return const Center(child: Text('Could not load requests.'));
+          return const _EmptyState(
+            icon: Icons.cloud_off_outlined,
+            message: 'Could not load requests. Check your connection.',
+          );
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -131,115 +140,117 @@ class _RequestList extends StatelessWidget {
 
         final items = snapshot.data ?? const <ServiceRequest>[];
         if (items.isEmpty && !showProgressActions) {
-          return Center(child: Text(emptyMessage));
+          return _EmptyState(icon: Icons.inbox_outlined, message: emptyMessage);
         }
 
-        return ListView.separated(
-          padding: const EdgeInsets.all(16),
-          itemCount: items.length + (showProgressActions ? 1 : 0),
-          separatorBuilder: (_, _) => const SizedBox(height: 12),
-          itemBuilder: (context, index) {
-            if (showProgressActions && index == 0) {
-              final earnings = items
-                  .where(
-                    (request) =>
-                        request.status == RequestStatus.completed &&
-                        request.paymentStatus == 'paid',
-                  )
-                  .fold<int>(
-                    0,
-                    (sum, request) => sum + (request.quotedPrice ?? 0),
-                  );
-              return Card(
-                child: ListTile(
-                  leading: const Icon(Icons.account_balance_wallet_outlined),
-                  title: const Text('Confirmed earnings'),
-                  trailing: Text('₱$earnings'),
-                ),
-              );
-            }
-            if (items.isEmpty) return Center(child: Text(emptyMessage));
-            final request = items[index - (showProgressActions ? 1 : 0)];
-            final progressLabel = switch (request.status) {
-              RequestStatus.accepted => 'On the way',
-              RequestStatus.onTheWay => 'Mark arrived',
-              RequestStatus.arrived => 'Start job',
-              RequestStatus.inProgress => 'Mark provider complete',
-              _ => null,
-            };
-            final label = showProgressActions ? progressLabel : actionLabel;
-
-            return Card(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            request.category,
-                            style: Theme.of(context).textTheme.titleMedium,
-                          ),
-                        ),
-                        _StatusLabel(status: request.status),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(request.description),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${request.serviceArea} · ${showProgressActions ? request.customerName : 'Requested by ${request.customerName}'}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    if (request.quotedPrice != null)
-                      Text('Agreed quote: ₱${request.quotedPrice}'),
-                    if (onOpenChat != null &&
-                        request.status != RequestStatus.requested &&
-                        request.status != RequestStatus.quoted)
-                      TextButton.icon(
-                        onPressed: () => onOpenChat!(request),
-                        icon: const Icon(Icons.chat_bubble_outline_rounded),
-                        label: const Text('Chat'),
-                      ),
-                    if (request.status == RequestStatus.completed &&
-                        request.paymentStatus ==
-                            'pending_provider_confirmation' &&
-                        onConfirmCashPayment != null)
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: FilledButton.icon(
-                          onPressed: () =>
-                              _runPaymentConfirmation(context, request),
-                          icon: const Icon(Icons.payments_outlined),
-                          label: const Text('Confirm cash received'),
-                        ),
-                      ),
-                    if (label != null) ...[
-                      const SizedBox(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          if (onDecline != null)
-                            TextButton(
-                              onPressed: () => _runDecline(context, request),
-                              child: const Text('Decline'),
-                            ),
-                          FilledButton(
-                            onPressed: () => _runAction(context, request),
-                            child: Text(label),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            );
-          },
+        return ContentWidth(
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              if (showProgressActions) ...[
+                _EarningsCard(jobs: items),
+                const SizedBox(height: 12),
+              ],
+              if (items.isEmpty)
+                _EmptyState(icon: Icons.work_outline, message: emptyMessage),
+              for (final request in items) ...[
+                _buildRequestCard(context, request),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
         );
       },
+    );
+  }
+
+  Widget _buildRequestCard(BuildContext context, ServiceRequest request) {
+    final progressLabel = switch (request.status) {
+      RequestStatus.accepted => 'On the way',
+      RequestStatus.onTheWay => 'Mark arrived',
+      RequestStatus.arrived => 'Start job',
+      RequestStatus.inProgress => 'Mark provider complete',
+      _ => null,
+    };
+    final label = showProgressActions ? progressLabel : actionLabel;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(request.category, style: textTheme.titleMedium),
+                ),
+                StatusChip(status: request.status),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(request.description),
+            const SizedBox(height: 8),
+            Text(
+              '${request.serviceArea} · ${showProgressActions ? request.customerName : 'Requested by ${request.customerName}'}',
+              style: textTheme.bodySmall,
+            ),
+            if (request.scheduledAt != null)
+              Text(
+                'Scheduled: ${formatDateTime(request.scheduledAt!)}',
+                style: textTheme.bodySmall,
+              ),
+            if (request.quotedPrice != null)
+              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
+            if (onOpenChat != null &&
+                request.status != RequestStatus.requested &&
+                request.status != RequestStatus.quoted)
+              TextButton.icon(
+                onPressed: () => onOpenChat!(request),
+                icon: const Icon(Icons.chat_bubble_outline_rounded),
+                label: const Text('Chat'),
+              ),
+            if (request.status == RequestStatus.completed &&
+                request.paymentStatus == 'pending_provider_confirmation' &&
+                onConfirmCashPayment != null)
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: () => _runPaymentConfirmation(context, request),
+                  icon: const Icon(Icons.payments_outlined),
+                  label: const Text('Confirm cash received'),
+                ),
+              ),
+            if (request.paymentStatus == 'paid')
+              Text(
+                'Payment received',
+                style: textTheme.bodySmall?.copyWith(
+                  color: AppTheme.successGreen,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            if (label != null) ...[
+              const SizedBox(height: 12),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (onDecline != null)
+                    TextButton(
+                      onPressed: () => _runDecline(context, request),
+                      child: const Text('Decline'),
+                    ),
+                  const SizedBox(width: 8),
+                  FilledButton(
+                    onPressed: () => _runAction(context, request),
+                    child: Text(label),
+                  ),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 
@@ -249,7 +260,11 @@ class _RequestList extends StatelessWidget {
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not update the request: $error')),
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(error, 'Could not update the request.'),
+          ),
+        ),
       );
     }
   }
@@ -260,7 +275,11 @@ class _RequestList extends StatelessWidget {
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not decline the request: $error')),
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(error, 'Could not decline the request.'),
+          ),
+        ),
       );
     }
   }
@@ -274,29 +293,72 @@ class _RequestList extends StatelessWidget {
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not confirm payment: $error')),
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(error, 'Could not confirm payment.'),
+          ),
+        ),
       );
     }
   }
 }
 
-class _StatusLabel extends StatelessWidget {
-  const _StatusLabel({required this.status});
+class _EarningsCard extends StatelessWidget {
+  const _EarningsCard({required this.jobs});
 
-  final String status;
+  final List<ServiceRequest> jobs;
 
   @override
   Widget build(BuildContext context) {
-    final label = switch (status) {
-      RequestStatus.quoted => 'Quotes received',
-      RequestStatus.onTheWay => 'On the way',
-      RequestStatus.inProgress => 'In progress',
-      RequestStatus.providerCompleted => 'Awaiting confirmation',
-      RequestStatus.completed => 'Completed',
-      RequestStatus.cancelled => 'Cancelled',
-      _ => status[0].toUpperCase() + status.substring(1),
-    };
-    return Chip(label: Text(label));
+    final paidJobs = jobs.where(
+      (request) =>
+          request.status == RequestStatus.completed &&
+          request.paymentStatus == 'paid',
+    );
+    final earnings = paidJobs.fold<int>(
+      0,
+      (sum, request) => sum + (request.quotedPrice ?? 0),
+    );
+    final activeJobs = jobs
+        .where(
+          (request) =>
+              request.status != RequestStatus.completed &&
+              request.status != RequestStatus.cancelled,
+        )
+        .length;
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.account_balance_wallet_outlined),
+        title: const Text('Confirmed earnings'),
+        subtitle: Text('${paidJobs.length} paid · $activeJobs active'),
+        trailing: Text(
+          formatPeso(earnings),
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+      ),
+    );
+  }
+}
+
+class _EmptyState extends StatelessWidget {
+  const _EmptyState({required this.icon, required this.message});
+
+  final IconData icon;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 32, color: AppTheme.textSecondary),
+          const SizedBox(height: 10),
+          Text(message, textAlign: TextAlign.center),
+        ],
+      ),
+    );
   }
 }
 
