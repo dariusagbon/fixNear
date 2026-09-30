@@ -14,6 +14,8 @@ import {
   where,
   writeBatch,
   addDoc,
+  deleteDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import {
   CUSTOMER,
@@ -128,6 +130,47 @@ describe('users (registration and profile)', () => {
     const db = dbAs(env, CUSTOMER);
     await assertSucceeds(getDoc(doc(db, `users/${CUSTOMER}`)));
     await assertFails(getDoc(doc(db, `users/${PROVIDER}`)));
+  });
+});
+
+describe('push tokens', () => {
+  const token = 'fcm-token-abc123';
+  const tokenDoc = () => ({
+    token,
+    platform: 'android',
+    updatedAt: serverTimestamp(),
+  });
+
+  it('lets a user save, refresh and remove their own device token', async () => {
+    const ref = doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}/tokens/${token}`);
+    await assertSucceeds(setDoc(ref, tokenDoc()));
+    await assertSucceeds(setDoc(ref, tokenDoc()));
+    await assertSucceeds(deleteDoc(ref));
+  });
+
+  it('rejects tokens for other users, mismatched IDs and extra fields', async () => {
+    await assertFails(setDoc(
+      doc(dbAs(env, PROVIDER), `users/${CUSTOMER}/tokens/${token}`),
+      tokenDoc(),
+    ));
+    await assertFails(setDoc(
+      doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}/tokens/other-token`),
+      tokenDoc(),
+    ));
+    await assertFails(setDoc(
+      doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}/tokens/${token}`),
+      { ...tokenDoc(), platform: 'fax' },
+    ));
+    await assertFails(setDoc(
+      doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}/tokens/${token}`),
+      { ...tokenDoc(), uid: PROVIDER },
+    ));
+  });
+
+  it('rejects reading tokens, even your own', async () => {
+    await seed(env, { [`users/${CUSTOMER}/tokens/${token}`]: { token, platform: 'web', updatedAt: Timestamp.now() } });
+    await assertFails(getDoc(doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}/tokens/${token}`)));
+    await assertFails(deleteDoc(doc(dbAs(env, PROVIDER), `users/${CUSTOMER}/tokens/${token}`)));
   });
 });
 

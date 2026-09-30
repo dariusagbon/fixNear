@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -6,10 +8,13 @@ import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
 import 'package:fixnear/core/services/cloudinary_service.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
+import 'package:fixnear/core/services/push_notifications.dart';
 import 'package:fixnear/core/theme/app_theme.dart';
 import 'package:fixnear/core/utils/formatters.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
 import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
+import 'package:fixnear/features/jobs/job_detail_screen.dart';
+import 'package:fixnear/features/notifications/notification_host.dart';
 import 'package:fixnear/features/profile/edit_profile_screen.dart';
 import 'package:fixnear/features/provider/provider_home_screen.dart';
 
@@ -305,6 +310,212 @@ void main() {
     expect(find.text('Save changes'), findsOneWidget);
   });
 
+  group('notifications', () {
+    ServiceRequest acceptedJob() => ServiceRequest(
+      id: 'job-7',
+      customerUid: 'customer-1',
+      customerName: 'Casey Customer',
+      category: 'Plumbing',
+      description: 'Fix a leaking faucet',
+      serviceArea: 'Davao City',
+      status: RequestStatus.accepted,
+      providerUid: 'provider-1',
+      providerName: 'Provider One',
+      quotedPrice: 850,
+      createdAt: DateTime(2026),
+    );
+
+    Widget host(
+      _FakePush push,
+      _FakeMarketplaceRepository repository, {
+      UserRole role = UserRole.customer,
+    }) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      home: NotificationHost(
+        push: push,
+        repository: repository,
+        uid: role == UserRole.customer ? 'customer-1' : 'provider-1',
+        name: 'Someone',
+        role: role,
+        child: const Scaffold(body: Text('Home')),
+      ),
+    );
+
+    testWidgets('registers the device silently on sign-in', (tester) async {
+      final push = _FakePush();
+      await tester.pumpWidget(host(push, _FakeMarketplaceRepository()));
+      await tester.pumpAndSettle();
+      expect(push.registered, ['customer-1']);
+      expect(push.permissionRequests, 0);
+    });
+
+    testWidgets('tapping a notification opens the job', (tester) async {
+      final push = _FakePush();
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [acceptedJob()];
+      await tester.pumpWidget(host(push, repository));
+      await tester.pumpAndSettle();
+
+      push.opened.add('job-7');
+      await tester.pumpAndSettle();
+      expect(find.byType(JobDetailScreen), findsOneWidget);
+      expect(find.text('Fix a leaking faucet'), findsOneWidget);
+      expect(find.text('Progress'), findsOneWidget);
+    });
+
+    testWidgets('a notification that launched the app opens the job', (
+      tester,
+    ) async {
+      final push = _FakePush()..initialJobId = 'job-7';
+      final repository = _FakeMarketplaceRepository()
+        ..providerJobs = [acceptedJob()];
+      await tester.pumpWidget(host(push, repository, role: UserRole.provider));
+      await tester.pumpAndSettle();
+      expect(find.byType(JobDetailScreen), findsOneWidget);
+      // The provider sees their next step on the detail page.
+      expect(find.text('On the way'), findsWidgets);
+    });
+
+    testWidgets('foreground notifications show a banner with View', (
+      tester,
+    ) async {
+      final push = _FakePush();
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [acceptedJob()];
+      await tester.pumpWidget(host(push, repository));
+      await tester.pumpAndSettle();
+
+      push.foreground.add(
+        const ForegroundNotice(
+          title: 'Provider One is on the way',
+          body: 'Plumbing · Davao City',
+          requestId: 'job-7',
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Provider One is on the way'), findsOneWidget);
+      await tester.tap(find.text('View'));
+      await tester.pumpAndSettle();
+      expect(find.byType(JobDetailScreen), findsOneWidget);
+    });
+
+    testWidgets('a missing job shows a plain message', (tester) async {
+      final push = _FakePush();
+      await tester.pumpWidget(host(push, _FakeMarketplaceRepository()));
+      await tester.pumpAndSettle();
+      push.opened.add('gone');
+      await tester.pumpAndSettle();
+      expect(find.text('This job no longer exists.'), findsOneWidget);
+    });
+
+    testWidgets('customers are asked for permission after their first post', (
+      tester,
+    ) async {
+      final push = _FakePush()..canAsk = true;
+      final repository = _FakeMarketplaceRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: repository,
+            push: push,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Nothing is asked at launch.
+      expect(find.text('Get updates on your job?'), findsNothing);
+
+      await tester.tap(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'Repair a leaking kitchen faucet',
+      );
+      await tester.enterText(find.byType(TextFormField).last, 'Davao City');
+      await tester.tap(find.text('Choose date and time'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send request'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Get updates on your job?'), findsOneWidget);
+      await tester.tap(find.text('Turn on'));
+      await tester.pumpAndSettle();
+      expect(push.permissionRequests, 1);
+      expect(push.registered, ['customer-1']);
+    });
+
+    testWidgets('providers are asked for permission when going online', (
+      tester,
+    ) async {
+      final push = _FakePush()..canAsk = true;
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = const ProviderProfile(
+          id: 'provider-1',
+          name: 'Provider One',
+          category: 'Plumbing',
+          serviceArea: 'Davao City',
+          startingPrice: 500,
+          isAvailable: false,
+        );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: repository,
+            push: push,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Offline'), findsOneWidget);
+
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(repository.availabilityChanges, [true]);
+      expect(find.text('Get new jobs as they come in?'), findsOneWidget);
+
+      await tester.tap(find.text('Not now'));
+      await tester.pumpAndSettle();
+      expect(push.permissionRequests, 0);
+    });
+
+    testWidgets('devices that were already asked are not asked again', (
+      tester,
+    ) async {
+      final push = _FakePush()..canAsk = false;
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = const ProviderProfile(
+          id: 'provider-1',
+          name: 'Provider One',
+          category: 'Plumbing',
+          serviceArea: 'Davao City',
+          startingPrice: 500,
+          isAvailable: false,
+        );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: repository,
+            push: push,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byType(Switch));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+  });
+
   group('layouts', () {
     final profile = AppUser(
       id: 'customer-1',
@@ -415,7 +626,32 @@ void main() {
         await tester.tap(find.text('Requests'));
         await tester.pumpAndSettle();
         // The quoted job and the unpaid job both wait on the customer.
-        expect(find.byIcon(Icons.priority_high_rounded), findsNWidgets(2));
+        final needsYou = find.byIcon(Icons.priority_high_rounded);
+        expect(
+          find.descendant(
+            of: find.ancestor(
+              of: find.text('Electrical'),
+              matching: find.byType(Card),
+            ),
+            matching: needsYou,
+          ),
+          findsOneWidget,
+        );
+        await tester.scrollUntilVisible(
+          find.text('Pay cash'),
+          200,
+          scrollable: find.byType(Scrollable).last,
+        );
+        expect(
+          find.descendant(
+            of: find.ancestor(
+              of: find.text('Pay cash'),
+              matching: find.byType(Card),
+            ),
+            matching: needsYou,
+          ),
+          findsOneWidget,
+        );
         await checkGuidelines(tester);
 
         await tester.tap(find.text('Account').last);
@@ -511,6 +747,9 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   String? quotedProviderUid;
   int? quotePrice;
   List<ServiceRequest> customerRequests = [];
+  List<ServiceRequest> providerJobs = [];
+  ProviderProfile? ownProfile;
+  final List<bool> availabilityChanges = [];
   final Map<String, List<ProviderQuote>> quotesByRequest = {};
   String? acceptedRequestId;
   ProviderQuote? acceptedQuote;
@@ -534,12 +773,33 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
       Stream.value(customerRequests);
 
   @override
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid) =>
+      Stream.value(ownProfile);
+
+  @override
+  Future<void> setProviderAvailability(
+    String providerUid,
+    bool isAvailable,
+  ) async {
+    availabilityChanges.add(isAvailable);
+  }
+
+  @override
+  Stream<ServiceRequest?> watchRequest(String requestId) => Stream.value(
+    [
+      ...customerRequests,
+      ...openRequests,
+      ...providerJobs,
+    ].where((request) => request.id == requestId).firstOrNull,
+  );
+
+  @override
   Stream<List<ServiceRequest>> watchOpenRequests(String providerUid) =>
       Stream.value(openRequests);
 
   @override
   Stream<List<ServiceRequest>> watchProviderJobs(String providerUid) =>
-      Stream.value(const []);
+      Stream.value(providerJobs);
 
   @override
   Stream<List<ProviderQuote>> watchQuotes(String requestId) =>
@@ -616,4 +876,44 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
 
   @override
   Future<void> confirmCashPayment(String requestId, String providerUid) async {}
+}
+
+class _FakePush implements PushNotifications {
+  bool canAsk = false;
+  bool grant = true;
+  int permissionRequests = 0;
+  final List<String> registered = [];
+  final List<String> unregistered = [];
+  String? initialJobId;
+  final opened = StreamController<String>.broadcast();
+  final foreground = StreamController<ForegroundNotice>.broadcast();
+
+  @override
+  Future<bool> canAskPermission() async => canAsk;
+
+  @override
+  Future<bool> requestPermission() async {
+    permissionRequests++;
+    canAsk = false;
+    return grant;
+  }
+
+  @override
+  Future<void> registerDevice(String uid) async => registered.add(uid);
+
+  @override
+  Future<void> unregisterDevice(String uid) async => unregistered.add(uid);
+
+  @override
+  Stream<String> get openedJobIds => opened.stream;
+
+  @override
+  Future<String?> takeInitialJobId() async {
+    final id = initialJobId;
+    initialJobId = null;
+    return id;
+  }
+
+  @override
+  Stream<ForegroundNotice> get foregroundNotices => foreground.stream;
 }

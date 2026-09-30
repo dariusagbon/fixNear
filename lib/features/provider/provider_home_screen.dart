@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 
+import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
+import '../../core/utils/feedback.dart';
+import '../notifications/notification_permission.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/attention.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
-import '../messaging/job_chat_sheet.dart';
+import '../jobs/job_detail_screen.dart';
+import '../jobs/provider_job_card.dart';
 
 class ProviderHomeScreen extends StatelessWidget {
   const ProviderHomeScreen({
@@ -14,6 +18,7 @@ class ProviderHomeScreen extends StatelessWidget {
     required this.providerName,
     required this.repository,
     this.onSignOut,
+    this.push,
     super.key,
   });
 
@@ -21,6 +26,10 @@ class ProviderHomeScreen extends StatelessWidget {
   final String providerName;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
+
+  /// Used to ask for notification permission the first time the provider
+  /// goes online. Null in tests and when push isn't available.
+  final PushNotifications? push;
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +39,11 @@ class ProviderHomeScreen extends StatelessWidget {
         appBar: AppBar(
           title: const Text('Provider workspace'),
           actions: [
+            _OnlineSwitch(
+              providerUid: providerUid,
+              repository: repository,
+              push: push,
+            ),
             if (onSignOut != null)
               IconButton(
                 tooltip: 'Sign out',
@@ -46,87 +60,124 @@ class ProviderHomeScreen extends StatelessWidget {
         ),
         body: TabBarView(
           children: [
-            _RequestList(
-              providerUid: providerUid,
+            _JobList(
               requests: repository.watchOpenRequests(providerUid),
               emptyMessage: 'No open requests nearby yet.',
-              actionLabel: 'Send quote',
-              onAction: (request) async {
-                final quote = await showDialog<_QuoteSubmission>(
-                  context: context,
-                  builder: (_) => const _QuoteDialog(),
-                );
-                if (quote == null) return;
-                await repository.sendQuote(
-                  requestId: request.id,
-                  providerUid: providerUid,
-                  providerName: providerName,
-                  price: quote.price,
-                  note: quote.note,
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Quote sent.')));
-              },
-              onDecline: (request) =>
-                  repository.declineRequest(request.id, providerUid),
+              actions: actions,
+              onOpenJob: (id) => _openJob(context, id),
             ),
-            _RequestList(
-              providerUid: providerUid,
+            _JobList(
               requests: repository.watchProviderJobs(providerUid),
               emptyMessage: 'Accepted jobs will appear here.',
-              actionLabel: null,
-              onAction: (request) {
-                final nextStatus = switch (request.status) {
-                  RequestStatus.accepted => RequestStatus.onTheWay,
-                  RequestStatus.onTheWay => RequestStatus.arrived,
-                  RequestStatus.arrived => RequestStatus.inProgress,
-                  RequestStatus.inProgress => RequestStatus.providerCompleted,
-                  _ => null,
-                };
-                if (nextStatus == null) return Future.value();
-                return repository.advanceRequest(request.id, nextStatus);
-              },
-              onOpenChat: (request) => showJobChatSheet(
-                context: context,
-                requestId: request.id,
-                currentUid: providerUid,
-                currentName: providerName,
-                repository: repository,
-              ),
-              onConfirmCashPayment: (request) =>
-                  repository.confirmCashPayment(request.id, providerUid),
-              showProgressActions: true,
+              actions: actions,
+              onOpenJob: (id) => _openJob(context, id),
+              showEarnings: true,
             ),
           ],
         ),
       ),
     );
   }
+
+  ProviderJobActions get actions => ProviderJobActions(
+    repository: repository,
+    providerUid: providerUid,
+    providerName: providerName,
+  );
+
+  void _openJob(BuildContext context, String requestId) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JobDetailScreen(
+          requestId: requestId,
+          viewerUid: providerUid,
+          viewerName: providerName,
+          viewerRole: UserRole.provider,
+          repository: repository,
+        ),
+      ),
+    );
+  }
 }
 
-class _RequestList extends StatelessWidget {
-  const _RequestList({
+/// Takes the provider online (visible to customers, sent new jobs) or
+/// offline. Going online is when we first ask for notification permission.
+class _OnlineSwitch extends StatelessWidget {
+  const _OnlineSwitch({
     required this.providerUid,
-    required this.requests,
-    required this.emptyMessage,
-    required this.actionLabel,
-    required this.onAction,
-    this.onDecline,
-    this.onOpenChat,
-    this.onConfirmCashPayment,
-    this.showProgressActions = false,
+    required this.repository,
+    required this.push,
   });
 
   final String providerUid;
+  final MarketplaceRepository repository;
+  final PushNotifications? push;
+
+  Future<void> _set(BuildContext context, bool online) async {
+    await runWithFeedback(
+      context,
+      () => repository.setProviderAvailability(providerUid, online),
+      failureMessage: online
+          ? 'Could not go online. Try again.'
+          : 'Could not go offline. Try again.',
+      successMessage: online ? 'You are online.' : 'You are offline.',
+    );
+    final push = this.push;
+    if (online && push != null && context.mounted) {
+      await askForNotificationsIfUseful(
+        context: context,
+        push: push,
+        uid: providerUid,
+        title: 'Get new jobs as they come in?',
+        reason:
+            'Turn on notifications to hear about jobs posted near you, '
+            'jobs sent directly to you, and when customers accept your quote '
+            'or send a message.',
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ProviderProfile?>(
+      stream: repository.watchProviderProfile(providerUid),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        final online = profile?.isAvailable ?? false;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              online ? 'Online' : 'Offline',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            Switch(
+              value: online,
+              onChanged: profile == null
+                  ? null
+                  : (value) => _set(context, value),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _JobList extends StatelessWidget {
+  const _JobList({
+    required this.requests,
+    required this.emptyMessage,
+    required this.actions,
+    required this.onOpenJob,
+    this.showEarnings = false,
+  });
+
   final Stream<List<ServiceRequest>> requests;
   final String emptyMessage;
-  final String? actionLabel;
-  final Future<void> Function(ServiceRequest request) onAction;
-  final Future<void> Function(ServiceRequest request)? onDecline;
-  final Future<void> Function(ServiceRequest request)? onOpenChat;
-  final Future<void> Function(ServiceRequest request)? onConfirmCashPayment;
-  final bool showProgressActions;
+  final ProviderJobActions actions;
+  final void Function(String requestId) onOpenJob;
+  final bool showEarnings;
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +195,7 @@ class _RequestList extends StatelessWidget {
         }
 
         final items = snapshot.data ?? const <ServiceRequest>[];
-        if (items.isEmpty && !showProgressActions) {
+        if (items.isEmpty && !showEarnings) {
           return _EmptyState(icon: Icons.inbox_outlined, message: emptyMessage);
         }
 
@@ -152,14 +203,18 @@ class _RequestList extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (showProgressActions) ...[
+              if (showEarnings) ...[
                 _EarningsCard(jobs: items),
                 const SizedBox(height: 12),
               ],
               if (items.isEmpty)
                 _EmptyState(icon: Icons.work_outline, message: emptyMessage),
               for (final request in items) ...[
-                _buildRequestCard(context, request),
+                ProviderJobCard(
+                  request: request,
+                  actions: actions,
+                  onOpenDetails: () => onOpenJob(request.id),
+                ),
                 const SizedBox(height: 12),
               ],
             ],
@@ -167,148 +222,6 @@ class _RequestList extends StatelessWidget {
         );
       },
     );
-  }
-
-  Widget _buildRequestCard(BuildContext context, ServiceRequest request) {
-    final progressLabel = switch (request.status) {
-      RequestStatus.accepted => 'On the way',
-      RequestStatus.onTheWay => 'Mark arrived',
-      RequestStatus.arrived => 'Start job',
-      RequestStatus.inProgress => 'Mark provider complete',
-      _ => null,
-    };
-    final label = showProgressActions ? progressLabel : actionLabel;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(request.category, style: textTheme.titleMedium),
-                ),
-                StatusChip(
-                  status: request.status,
-                  needsYou: providerNeedsToAct(request, providerUid),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(request.description),
-            const SizedBox(height: 8),
-            Text(
-              '${request.serviceArea} · ${showProgressActions ? request.customerName : 'Requested by ${request.customerName}'}',
-              style: textTheme.bodySmall,
-            ),
-            if (request.scheduledAt != null)
-              Text(
-                'Scheduled: ${formatDateTime(request.scheduledAt!)}',
-                style: textTheme.bodySmall,
-              ),
-            if (request.quotedPrice != null)
-              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
-            if (onOpenChat != null &&
-                request.status != RequestStatus.requested &&
-                request.status != RequestStatus.quoted)
-              TextButton.icon(
-                onPressed: () => onOpenChat!(request),
-                icon: const Icon(Icons.chat_bubble_outline_rounded),
-                label: const Text('Chat'),
-              ),
-            if (request.status == RequestStatus.completed &&
-                request.paymentStatus == 'pending_provider_confirmation' &&
-                onConfirmCashPayment != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: () => _runPaymentConfirmation(context, request),
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Confirm cash received'),
-                ),
-              ),
-            if (request.paymentStatus == 'paid')
-              Text(
-                'Payment received',
-                style: textTheme.bodySmall?.copyWith(
-                  color: AppTheme.success,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            if (label != null) ...[
-              const SizedBox(height: 12),
-              Wrap(
-                alignment: WrapAlignment.end,
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  if (onDecline != null)
-                    TextButton(
-                      onPressed: () => _runDecline(context, request),
-                      child: const Text('Decline'),
-                    ),
-                  FilledButton(
-                    onPressed: () => _runAction(context, request),
-                    child: Text(label),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _runAction(BuildContext context, ServiceRequest request) async {
-    try {
-      await onAction(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not update the request.'),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _runDecline(BuildContext context, ServiceRequest request) async {
-    try {
-      await onDecline!(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not decline the request.'),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _runPaymentConfirmation(
-    BuildContext context,
-    ServiceRequest request,
-  ) async {
-    try {
-      await onConfirmCashPayment!(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not confirm payment.'),
-          ),
-        ),
-      );
-    }
   }
 }
 
@@ -367,89 +280,6 @@ class _EmptyState extends StatelessWidget {
           Text(message, textAlign: TextAlign.center),
         ],
       ),
-    );
-  }
-}
-
-class _QuoteSubmission {
-  const _QuoteSubmission(this.price, this.note);
-
-  final int price;
-  final String note;
-}
-
-class _QuoteDialog extends StatefulWidget {
-  const _QuoteDialog();
-
-  @override
-  State<_QuoteDialog> createState() => _QuoteDialogState();
-}
-
-class _QuoteDialogState extends State<_QuoteDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _priceController = TextEditingController();
-  final _noteController = TextEditingController();
-
-  @override
-  void dispose() {
-    _priceController.dispose();
-    _noteController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Send quote'),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Price (PHP)'),
-              validator: (value) {
-                final price = int.tryParse(value?.trim() ?? '');
-                return price == null || price < 1
-                    ? 'Enter a valid price'
-                    : null;
-              },
-            ),
-            TextFormField(
-              controller: _noteController,
-              minLines: 1,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Message to customer',
-              ),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'Add a short note'
-                  : null,
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(
-              context,
-              _QuoteSubmission(
-                int.parse(_priceController.text.trim()),
-                _noteController.text.trim(),
-              ),
-            );
-          },
-          child: const Text('Send quote'),
-        ),
-      ],
     );
   }
 }

@@ -5,12 +5,14 @@ import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
-import '../../core/utils/attention.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
-import '../messaging/job_chat_sheet.dart';
+import '../jobs/customer_job_card.dart';
+import '../jobs/job_detail_screen.dart';
+import '../notifications/notification_permission.dart';
 import '../profile/edit_profile_screen.dart';
 
 class CustomerMarketplaceScreen extends StatefulWidget {
@@ -23,6 +25,7 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     this.imageUploader,
     this.onSaveProfile,
     this.pickPhoto = pickPhotoWithImagePicker,
+    this.push,
     super.key,
   });
 
@@ -37,6 +40,9 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   final ImageUploader? imageUploader;
   final ProfileSaver? onSaveProfile;
   final PhotoPicker pickPhoto;
+
+  /// Used to ask for notification permission after the first job is posted.
+  final PushNotifications? push;
 
   @override
   State<CustomerMarketplaceScreen> createState() =>
@@ -287,41 +293,10 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   itemCount: requests.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) => _CustomerRequestCard(
+                  itemBuilder: (context, index) => CustomerRequestCard(
                     request: requests[index],
-                    quotes: widget.repository.watchQuotes(requests[index].id),
-                    onAcceptQuote: (quote) => _runWithFeedback(
-                      () => widget.repository.acceptQuote(
-                        requests[index].id,
-                        quote,
-                      ),
-                      failureMessage: 'Could not accept this quote.',
-                      successMessage: 'Quote accepted.',
-                    ),
-                    onCancel: () => _cancelRequest(requests[index]),
-                    onConfirmCompletion: () => _runWithFeedback(
-                      () => widget.repository.confirmCompletion(
-                        requests[index].id,
-                        widget.customerUid,
-                      ),
-                      failureMessage: 'Could not confirm completion.',
-                    ),
-                    onOpenChat: requests[index].providerUid == null
-                        ? null
-                        : () => showJobChatSheet(
-                            context: context,
-                            requestId: requests[index].id,
-                            currentUid: widget.customerUid,
-                            currentName: widget.customerName,
-                            repository: widget.repository,
-                          ),
-                    onPayCash: () => _runWithFeedback(
-                      () => widget.repository.recordCashPayment(
-                        requests[index].id,
-                        widget.customerUid,
-                      ),
-                      failureMessage: 'Could not record cash payment.',
-                    ),
+                    actions: _jobActions,
+                    onOpenDetails: () => _openJob(requests[index].id),
                   ),
                 );
               },
@@ -445,54 +420,39 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Service request sent.')));
       setState(() => _selectedTab = 1);
+      final push = widget.push;
+      if (push != null) {
+        await askForNotificationsIfUseful(
+          context: context,
+          push: push,
+          uid: widget.customerUid,
+          title: 'Get updates on your job?',
+          reason:
+              'Turn on notifications to hear when providers send quotes, '
+              'when your provider is on the way, and when they message you.',
+        );
+      }
     }
   }
 
-  Future<void> _cancelRequest(ServiceRequest request) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel this request?'),
-        content: Text(
-          'Providers will no longer see your ${request.category.toLowerCase()} request.',
+  CustomerJobActions get _jobActions => CustomerJobActions(
+    repository: widget.repository,
+    customerUid: widget.customerUid,
+    customerName: widget.customerName,
+  );
+
+  void _openJob(String requestId) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JobDetailScreen(
+          requestId: requestId,
+          viewerUid: widget.customerUid,
+          viewerName: widget.customerName,
+          viewerRole: UserRole.customer,
+          repository: widget.repository,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep request'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel request'),
-          ),
-        ],
       ),
     );
-    if (confirmed != true) return;
-    await _runWithFeedback(
-      () => widget.repository.cancelRequest(request.id),
-      failureMessage: 'Could not cancel this request.',
-      successMessage: 'Request cancelled.',
-    );
-  }
-
-  Future<void> _runWithFeedback(
-    Future<void> Function() action, {
-    required String failureMessage,
-    String? successMessage,
-  }) async {
-    try {
-      await action();
-      if (successMessage != null && mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(successMessage)));
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyErrorMessage(error, failureMessage))),
-      );
-    }
   }
 
   IconData _categoryIcon(String? category) => switch (category) {
@@ -567,154 +527,6 @@ class _ProviderCard extends StatelessWidget {
                 label: const Text('Request service'),
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _CustomerRequestCard extends StatelessWidget {
-  const _CustomerRequestCard({
-    required this.request,
-    required this.quotes,
-    required this.onAcceptQuote,
-    required this.onCancel,
-    required this.onConfirmCompletion,
-    required this.onOpenChat,
-    required this.onPayCash,
-  });
-
-  final ServiceRequest request;
-  final Stream<List<ProviderQuote>> quotes;
-  final Future<void> Function(ProviderQuote quote) onAcceptQuote;
-  final VoidCallback onCancel;
-  final Future<void> Function() onConfirmCompletion;
-  final VoidCallback? onOpenChat;
-  final Future<void> Function() onPayCash;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    request.category,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                StatusChip(
-                  status: request.status,
-                  needsYou: customerNeedsToAct(request),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(request.description),
-            const SizedBox(height: 6),
-            Text('Area: ${request.serviceArea}'),
-            if (request.scheduledAt != null)
-              Text('Scheduled: ${formatDateTime(request.scheduledAt!)}'),
-            if (request.providerName != null)
-              Text('Provider: ${request.providerName}'),
-            if (request.quotedPrice != null)
-              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
-            if (onOpenChat != null && request.status != RequestStatus.cancelled)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: onOpenChat,
-                  icon: const Icon(Icons.chat_bubble_outline_rounded),
-                  label: const Text('Chat'),
-                ),
-              ),
-            if (request.status == RequestStatus.requested ||
-                request.status == RequestStatus.quoted)
-              StreamBuilder<List<ProviderQuote>>(
-                stream: quotes,
-                builder: (context, snapshot) {
-                  if (snapshot.hasError) {
-                    return const _CardNote(
-                      icon: Icons.cloud_off_outlined,
-                      text: 'Could not load quotes. Check your connection.',
-                    );
-                  }
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const Padding(
-                      padding: EdgeInsets.only(top: 12),
-                      child: LinearProgressIndicator(),
-                    );
-                  }
-                  final availableQuotes =
-                      snapshot.data ?? const <ProviderQuote>[];
-                  if (availableQuotes.isEmpty) {
-                    return const _CardNote(
-                      icon: Icons.hourglass_empty_rounded,
-                      text: 'Waiting for providers to send quotes.',
-                    );
-                  }
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 12),
-                      Text(
-                        'Provider quotes',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      for (final quote in availableQuotes)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            '${quote.providerName} · ${formatPeso(quote.price)}',
-                          ),
-                          subtitle: Text(quote.note),
-                          trailing: FilledButton(
-                            onPressed: () => onAcceptQuote(quote),
-                            child: const Text('Accept'),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            if (request.status == RequestStatus.providerCompleted)
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: onConfirmCompletion,
-                  child: const Text('Confirm completion'),
-                ),
-              ),
-            if (request.status == RequestStatus.completed &&
-                request.paymentStatus == 'unpaid')
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: onPayCash,
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Pay cash'),
-                ),
-              ),
-            if (request.paymentStatus == 'pending_provider_confirmation')
-              const Text('Cash payment awaiting provider confirmation.'),
-            if (request.paymentStatus == 'paid')
-              const Text('Payment confirmed.'),
-            if (request.status == RequestStatus.requested ||
-                request.status == RequestStatus.quoted)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: onCancel,
-                  icon: const Icon(Icons.close_rounded),
-                  label: const Text('Cancel request'),
-                ),
-              ),
           ],
         ),
       ),
@@ -1014,31 +826,6 @@ class _InlineMessage extends StatelessWidget {
           Icon(icon, size: 30, color: AppTheme.inkMuted),
           const SizedBox(height: 10),
           Text(message, textAlign: TextAlign.center),
-        ],
-      ),
-    );
-  }
-}
-
-/// A small icon-and-text line inside a card, for inline empty and error
-/// states.
-class _CardNote extends StatelessWidget {
-  const _CardNote({required this.icon, required this.text});
-
-  final IconData icon;
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 12),
-      child: Row(
-        children: [
-          Icon(icon, size: 18, color: AppTheme.inkMuted),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(text, style: Theme.of(context).textTheme.bodySmall),
-          ),
         ],
       ),
     );

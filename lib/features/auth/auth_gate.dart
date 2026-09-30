@@ -6,8 +6,10 @@ import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
 import '../customer/customer_marketplace_screen.dart';
+import '../notifications/notification_host.dart';
 import '../provider/provider_home_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -21,6 +23,15 @@ class _AuthGateState extends State<AuthGate> {
   final AuthService _authService = AuthService();
   final MarketplaceRepository _marketplace = FirestoreMarketplaceRepository();
   final ImageUploader _imageUploader = CloudinaryService();
+  late final PushNotifications _push = FirebasePushNotifications();
+
+  /// Removes this device's push token while still signed in (the rules need
+  /// the user), then signs out.
+  Future<void> _signOut(String uid) async {
+    await _push.unregisterDevice(uid);
+    await _authService.signOut();
+  }
+
   late final Stream<User?> _authStateChanges = _authService.authStateChanges();
 
   @override
@@ -71,14 +82,15 @@ class _AuthGateState extends State<AuthGate> {
               );
             }
 
-            return switch (profile.role) {
+            final home = switch (profile.role) {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
                 customerName: profile.name,
                 repository: _marketplace,
-                onSignOut: _authService.signOut,
+                onSignOut: () => _signOut(profile.id),
                 profile: profile,
                 imageUploader: _imageUploader,
+                push: _push,
                 onSaveProfile: ({required name, phone, photoUrl}) =>
                     _authService.updateProfile(
                       uid: profile.id,
@@ -91,9 +103,20 @@ class _AuthGateState extends State<AuthGate> {
                 providerUid: profile.id,
                 providerName: profile.name,
                 repository: _marketplace,
-                onSignOut: _authService.signOut,
+                onSignOut: () => _signOut(profile.id),
+                push: _push,
               ),
             };
+            return NotificationHost(
+              // A new user gets a fresh host (and token registration).
+              key: ValueKey(profile.id),
+              push: _push,
+              repository: _marketplace,
+              uid: profile.id,
+              name: profile.name,
+              role: profile.role,
+              child: home,
+            );
           },
         );
       },

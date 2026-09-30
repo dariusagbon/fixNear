@@ -51,6 +51,20 @@ service cloud.firestore {
             && request.resource.data.photoUrl.matches('^https://res[.]cloudinary[.]com/.+')));
 
       allow delete: if false;
+
+      // Push tokens for this user's devices. Only Cloud Functions (admin)
+      // read them to send notifications; the app writes and removes its own.
+      match /tokens/{token} {
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['token', 'platform', 'updatedAt'])
+          && request.resource.data.token == token
+          && token.size() <= 4096
+          && request.resource.data.platform in ['android', 'ios', 'web', 'other']
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+        allow read: if false;
+      }
     }
 
     match /providerProfiles/{providerId} {

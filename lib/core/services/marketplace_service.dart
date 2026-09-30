@@ -6,7 +6,16 @@ import '../models/marketplace_models.dart';
 
 abstract interface class MarketplaceRepository {
   Stream<List<ProviderProfile>> watchProviders();
+
+  /// A provider's own listing, whether or not they are online.
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid);
+
+  /// Takes a provider online (shown to customers) or offline.
+  Future<void> setProviderAvailability(String providerUid, bool isAvailable);
   Stream<List<ServiceRequest>> watchCustomerRequests(String customerUid);
+
+  /// A single job, or null if it doesn't exist or can't be read.
+  Stream<ServiceRequest?> watchRequest(String requestId);
   Stream<List<ServiceRequest>> watchOpenRequests(String providerUid);
   Stream<List<ServiceRequest>> watchProviderJobs(String providerUid);
   Stream<List<ProviderQuote>> watchQuotes(String requestId);
@@ -74,6 +83,38 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
         .where('customerUid', isEqualTo: customerUid)
         .snapshots()
         .map(_mapRequests);
+  }
+
+  @override
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid) {
+    return _firestore
+        .collection('providerProfiles')
+        .doc(providerUid)
+        .snapshots()
+        .map((snapshot) {
+          final data = snapshot.data();
+          return data == null
+              ? null
+              : ProviderProfile.fromMap(data, snapshot.id);
+        });
+  }
+
+  @override
+  Future<void> setProviderAvailability(
+    String providerUid,
+    bool isAvailable,
+  ) async {
+    await _firestore.collection('providerProfiles').doc(providerUid).update({
+      'isAvailable': isAvailable,
+    });
+  }
+
+  @override
+  Stream<ServiceRequest?> watchRequest(String requestId) {
+    return _requests.doc(requestId).snapshots().map((snapshot) {
+      final data = snapshot.data();
+      return data == null ? null : ServiceRequest.fromMap(data, snapshot.id);
+    });
   }
 
   @override

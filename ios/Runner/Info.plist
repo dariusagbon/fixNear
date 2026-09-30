@@ -70,5 +70,9 @@
 	<string>FixNear uses your photo library so you can choose a profile picture.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>FixNear uses the camera so you can take a profile picture.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>

@@ -256,6 +256,7 @@ class AppTheme {
       snackBarTheme: const SnackBarThemeData(
         behavior: SnackBarBehavior.floating,
         backgroundColor: ink,
+        actionTextColor: tint,
         elevation: 0,
       ),
     );
