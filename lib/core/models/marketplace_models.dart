@@ -107,6 +107,8 @@ class ServiceRequest {
     this.latitude,
     this.longitude,
     this.geohash,
+    this.cancelledBy,
+    this.cancelReason,
   });
 
   factory ServiceRequest.fromMap(Map<String, dynamic> data, String id) {
@@ -149,6 +151,8 @@ class ServiceRequest {
       latitude: latitude is num ? latitude.toDouble() : null,
       longitude: longitude is num ? longitude.toDouble() : null,
       geohash: data['geohash'] as String?,
+      cancelledBy: data['cancelledBy'] as String?,
+      cancelReason: data['cancelReason'] as String?,
     );
   }
 
@@ -193,6 +197,10 @@ class ServiceRequest {
   final double? latitude;
   final double? longitude;
   final String? geohash;
+
+  /// Who cancelled: 'customer', or 'system' for jobs closed automatically.
+  final String? cancelledBy;
+  final String? cancelReason;
 
   /// The pinned location, or null for jobs posted without one.
   LatLngPoint? get location => LatLngPoint.tryFrom(latitude, longitude);

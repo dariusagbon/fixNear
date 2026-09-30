@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  formatWhen,
+  noticesForCancellation,
   noticesForJobUpdate,
   noticesForMessage,
   noticesForNewJob,
+  noticesForQuotesNotSelected,
   noticesForQuoteWrite,
+  noticesForReopenedJob,
+  noticesForReschedule,
 } from '../src/events';
 
 const DOWNTOWN = { latitude: 7.0654, longitude: 125.6076 }; // San Pedro Cathedral
@@ -28,7 +33,7 @@ const job = (overrides: Record<string, unknown> = {}) => ({
 
 const provider = (uid: string, data: Record<string, unknown>) => ({
   uid,
-  data: { isAvailable: true, serviceArea: 'Davao City', ...data },
+  data: { isAvailable: true, category: 'Plumbing', serviceArea: 'Davao City', ...data },
 });
 
 describe('new jobs', () => {
@@ -75,6 +80,22 @@ describe('new jobs', () => {
       notices.map((n) => n.uid).sort(),
       ['far', 'far-wide', 'near', 'near-narrow', 'no-base-same-city'],
     );
+  });
+
+  it('skips providers in other trades and ones who declined', () => {
+    const notices = noticesForNewJob(
+      'r1',
+      job({ declinedProviderUids: ['near'] }),
+      [
+        ...providers,
+        provider('electrician', {
+          category: 'Electrical',
+          baseLatitude: LANANG.latitude,
+          baseLongitude: LANANG.longitude,
+        }),
+      ],
+    );
+    assert.deepEqual(notices.map((n) => n.uid).sort(), ['far-wide', 'no-base-same-city']);
   });
 
   it('sends a direct job only to the chosen provider', () => {
@@ -171,5 +192,82 @@ describe('messages', () => {
     const [notice] = noticesForMessage('r1', booked, { senderUid: 'p1', text: 'x'.repeat(500) });
     assert.equal(notice.body.length, 140);
     assert.deepEqual(noticesForMessage('r1', booked, { senderUid: 'someone', text: 'hi' }), []);
+  });
+});
+
+describe('reopened jobs', () => {
+  const direct = job({ providerUid: 'near', providerName: 'Near Provider' });
+  const nearby = [
+    provider('near', { baseLatitude: LANANG.latitude, baseLongitude: LANANG.longitude }),
+    provider('other', { baseLatitude: LANANG.latitude, baseLongitude: LANANG.longitude }),
+  ];
+
+  it('a declined direct job goes to the customer and other nearby providers', () => {
+    const after = { ...direct, providerUid: null, providerName: null, declinedProviderUids: ['near'] };
+    const notices = noticesForReopenedJob('r1', direct, after, nearby);
+    assert.deepEqual(notices.map((n) => [n.uid, n.type]), [
+      ['customer-1', 'job_reopened'],
+      ['other', 'new_job'],
+    ]);
+    assert.equal(notices[0].title, "Near Provider can't take this job");
+  });
+
+  it('a withdrawal says the provider cannot make it, with their reason', () => {
+    const booked = { ...direct, status: 'on_the_way' };
+    const after = {
+      ...booked,
+      status: 'requested',
+      providerUid: null,
+      providerName: null,
+      withdrawReason: 'Car broke down',
+      declinedProviderUids: ['near'],
+    };
+    const [toCustomer] = noticesForReopenedJob('r1', booked, after, nearby);
+    assert.equal(toCustomer.title, "Near Provider can't make it");
+    assert.match(toCustomer.body, /^Car broke down\. Your plumbing request is open/);
+  });
+
+  it('ignores jobs that were never assigned', () => {
+    assert.deepEqual(noticesForReopenedJob('r1', job(), job(), nearby), []);
+  });
+});
+
+describe('quotes not selected, cancellations and rescheduling', () => {
+  it('tells providers whose quotes lost', () => {
+    const notices = noticesForQuotesNotSelected('r1', job(), ['p2', 'p3']);
+    assert.deepEqual(notices.map((n) => n.uid), ['p2', 'p3']);
+    assert.equal(notices[0].title, 'Another provider was booked');
+  });
+
+  it('tells the booked provider when the customer cancels, with the reason', () => {
+    const booked = job({ status: 'accepted', providerUid: 'p1' });
+    const [notice, ...rest] = noticesForCancellation(
+      'r1',
+      booked,
+      { ...booked, status: 'cancelled', cancelledBy: 'customer', cancelReason: 'Fixed it myself' },
+      ['p2'],
+    );
+    assert.equal(rest.length, 0);
+    assert.equal(notice.uid, 'p1');
+    assert.equal(notice.body, 'Plumbing · Davao City: Fixed it myself');
+  });
+
+  it('tells quoting providers when an open job is cancelled, but not for system closures', () => {
+    const notices = noticesForCancellation('r1', job(), { ...job(), status: 'cancelled' }, ['p2', 'p3']);
+    assert.deepEqual(notices.map((n) => n.uid), ['p2', 'p3']);
+    assert.deepEqual(
+      noticesForCancellation('r1', job(), { ...job(), status: 'cancelled', cancelledBy: 'system' }, ['p2']),
+      [],
+    );
+  });
+
+  it('tells the booked provider about a new time, in Philippine time', () => {
+    const booked = job({ status: 'accepted', providerUid: 'p1', scheduledAt: new Date('2026-10-02T01:00:00Z') });
+    const moved = { ...booked, scheduledAt: new Date('2026-10-03T01:30:00Z') };
+    const [notice] = noticesForReschedule('r1', booked, moved);
+    assert.equal(notice.uid, 'p1');
+    assert.equal(notice.title, 'New time: Sat, Oct 3, 9:30 AM');
+    assert.deepEqual(noticesForReschedule('r1', booked, { ...booked }), []);
+    assert.equal(formatWhen(null), 'a new time');
   });
 });

@@ -252,7 +252,7 @@ class _OnlineSwitch extends StatelessWidget {
 
 /// Open jobs for this provider: sent to them first, then within their
 /// radius by distance, then older jobs without coordinates.
-class _JobBoard extends StatelessWidget {
+class _JobBoard extends StatefulWidget {
   const _JobBoard({
     required this.repository,
     required this.providerUid,
@@ -266,7 +266,18 @@ class _JobBoard extends StatelessWidget {
   final void Function(String requestId) onOpenJob;
 
   @override
+  State<_JobBoard> createState() => _JobBoardState();
+}
+
+class _JobBoardState extends State<_JobBoard> {
+  bool _allCategories = false;
+
+  @override
   Widget build(BuildContext context) {
+    final repository = widget.repository;
+    final providerUid = widget.providerUid;
+    final actions = widget.actions;
+    final onOpenJob = widget.onOpenJob;
     return StreamBuilder<ProviderProfile?>(
       stream: repository.watchProviderProfile(providerUid),
       builder: (context, profileSnapshot) {
@@ -288,6 +299,7 @@ class _JobBoard extends StatelessWidget {
               jobs: snapshot.data ?? const [],
               providerUid: providerUid,
               profile: profile,
+              allCategories: _allCategories,
             );
             final noBase = profile != null && profile.baseLocation == null;
             final radius = (profile?.serviceRadiusKm ?? defaultServiceRadiusKm)
@@ -297,6 +309,26 @@ class _JobBoard extends StatelessWidget {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
+                  if (profile != null) ...[
+                    Wrap(
+                      spacing: 8,
+                      children: [
+                        ChoiceChip(
+                          label: Text('${profile.category} jobs'),
+                          selected: !_allCategories,
+                          onSelected: (_) =>
+                              setState(() => _allCategories = false),
+                        ),
+                        ChoiceChip(
+                          label: const Text('All services'),
+                          selected: _allCategories,
+                          onSelected: (_) =>
+                              setState(() => _allCategories = true),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   if (noBase) ...[
                     Card(
                       child: ListTile(
@@ -318,7 +350,9 @@ class _JobBoard extends StatelessWidget {
                       icon: Icons.inbox_outlined,
                       message: noBase || profile == null
                           ? 'No open jobs yet.'
-                          : 'No open jobs within $radius km yet.',
+                          : _allCategories
+                          ? 'No open jobs within $radius km yet.'
+                          : 'No ${profile.category.toLowerCase()} jobs within $radius km yet. Try All services.',
                     ),
                   for (final entry in board) ...[
                     ProviderJobCard(

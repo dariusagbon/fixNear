@@ -22,10 +22,14 @@ class BoardEntry {
 /// 3. Located jobs, unfiltered, while the provider has no base location.
 /// 4. Older jobs without coordinates, always shown; ones whose text area
 ///    matches the provider's come first.
+///
+/// Unless [allCategories] is true, broadcast jobs outside the provider's
+/// main service are left out.
 List<BoardEntry> buildJobBoard({
   required List<ServiceRequest> jobs,
   required String providerUid,
   required ProviderProfile? profile,
+  bool allCategories = false,
 }) {
   final base = profile?.baseLocation;
   final radius = profile?.serviceRadiusKm ?? defaultServiceRadiusKm;
@@ -49,6 +53,10 @@ List<BoardEntry> buildJobBoard({
     );
     if (sentToMe) {
       direct.add(entry);
+    } else if (!allCategories &&
+        profile != null &&
+        !sameCategory(job.category, profile.category)) {
+      continue;
     } else if (location == null) {
       legacy.add(entry);
     } else if (distance == null) {
@@ -82,6 +90,9 @@ List<BoardEntry> buildJobBoard({
   });
   return [...direct, ...nearby, ...unfiltered, ...legacy];
 }
+
+bool sameCategory(String a, String b) =>
+    a.trim().toLowerCase() == b.trim().toLowerCase();
 
 /// A provider for customers, with distance from the customer when known.
 class NearbyProvider {

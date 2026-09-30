@@ -10,6 +10,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/utils/geo.dart';
 import '../../core/utils/job_matching.dart';
+import '../../core/utils/schedule_picker.dart';
 import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
 import '../jobs/customer_job_card.dart';
@@ -833,6 +834,10 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       setState(() => _error = 'Choose a date and time for the service.');
       return;
     }
+    if (!_scheduledAt!.isAfter(DateTime.now())) {
+      setState(() => _error = 'Choose a time later than now.');
+      return;
+    }
     setState(() {
       _isSubmitting = true;
       _error = null;
@@ -940,30 +945,13 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
   }
 
   Future<void> _chooseSchedule() async {
-    final now = DateTime.now();
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _scheduledAt ?? now,
-      firstDate: DateTime(now.year, now.month, now.day),
-      lastDate: DateTime(now.year + 2),
-    );
-    if (date == null || !mounted) return;
-    final time = await showTimePicker(
-      context: context,
-      initialTime: _scheduledAt == null
-          ? TimeOfDay.fromDateTime(now)
-          : TimeOfDay.fromDateTime(_scheduledAt!),
-    );
-    if (time == null || !mounted) return;
+    final picked = await pickScheduleDateTime(context, initial: _scheduledAt);
+    if (picked == null || !mounted) return;
     setState(() {
-      _scheduledAt = DateTime(
-        date.year,
-        date.month,
-        date.day,
-        time.hour,
-        time.minute,
-      );
-      _error = null;
+      _scheduledAt = picked;
+      _error = picked.isAfter(DateTime.now())
+          ? null
+          : 'Choose a time later than now.';
     });
   }
 }

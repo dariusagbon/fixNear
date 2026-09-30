@@ -6,6 +6,8 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/attention.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/utils/schedule_picker.dart';
+import '../../core/widgets/reason_dialog.dart';
 import '../../core/widgets/job_photos.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
@@ -35,31 +37,42 @@ class CustomerJobActions {
   );
 
   Future<void> cancel(BuildContext context, ServiceRequest request) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel this request?'),
-        content: Text(
-          'Providers will no longer see your ${request.category.toLowerCase()} request.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep request'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel request'),
-          ),
-        ],
-      ),
+    final booked =
+        request.providerUid != null &&
+        request.status != RequestStatus.requested &&
+        request.status != RequestStatus.quoted;
+    final reason = await showReasonDialog(
+      context,
+      title: 'Cancel this request?',
+      message: booked
+          ? '${request.providerName ?? 'Your provider'} will be told the job is cancelled.'
+          : 'Providers will no longer see your ${request.category.toLowerCase()} request.',
+      confirmLabel: 'Cancel request',
+      dismissLabel: 'Keep request',
     );
-    if (confirmed != true || !context.mounted) return;
+    if (reason == null || !context.mounted) return;
     await runWithFeedback(
       context,
-      () => repository.cancelRequest(request.id),
+      () => repository.cancelRequest(
+        request.id,
+        reason: reason.isEmpty ? null : reason,
+      ),
       failureMessage: 'Could not cancel this request.',
       successMessage: 'Request cancelled.',
+    );
+  }
+
+  Future<void> reschedule(BuildContext context, ServiceRequest request) async {
+    final picked = await pickScheduleDateTime(
+      context,
+      initial: request.scheduledAt,
+    );
+    if (picked == null || !context.mounted) return;
+    await runWithFeedback(
+      context,
+      () => repository.rescheduleRequest(request.id, picked),
+      failureMessage: 'Could not change the time.',
+      successMessage: 'New time: ${formatDateTime(picked)}.',
     );
   }
 
@@ -109,6 +122,14 @@ class CustomerRequestCard extends StatelessWidget {
       request.status == RequestStatus.requested ||
       request.status == RequestStatus.quoted;
 
+  bool get _canCancel =>
+      _isOpen ||
+      request.status == RequestStatus.accepted ||
+      request.status == RequestStatus.onTheWay;
+
+  bool get _canReschedule =>
+      _isOpen || request.status == RequestStatus.accepted;
+
   @override
   Widget build(BuildContext context) {
     return Card(
@@ -148,6 +169,15 @@ class CustomerRequestCard extends StatelessWidget {
                 onAccept: (quote) =>
                     actions.acceptQuote(context, request, quote),
               ),
+            if (request.status == RequestStatus.cancelled)
+              _CardNote(
+                icon: Icons.cancel_outlined,
+                text: request.cancelledBy == 'system'
+                    ? request.cancelReason ?? 'Closed automatically.'
+                    : request.cancelReason == null
+                    ? 'You cancelled this request.'
+                    : 'You cancelled: ${request.cancelReason}',
+              ),
             if (request.paymentStatus == 'pending_provider_confirmation')
               const _CardNote(
                 icon: Icons.hourglass_empty_rounded,
@@ -176,7 +206,13 @@ class CustomerRequestCard extends StatelessWidget {
                     icon: const Icon(Icons.chat_bubble_outline_rounded),
                     label: const Text('Chat'),
                   ),
-                if (_isOpen)
+                if (_canReschedule)
+                  TextButton.icon(
+                    onPressed: () => actions.reschedule(context, request),
+                    icon: const Icon(Icons.event_repeat_rounded),
+                    label: const Text('Reschedule'),
+                  ),
+                if (_canCancel)
                   TextButton.icon(
                     onPressed: () => actions.cancel(context, request),
                     icon: const Icon(Icons.close_rounded),

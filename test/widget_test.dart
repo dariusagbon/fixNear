@@ -14,6 +14,7 @@ import 'package:fixnear/core/services/push_notifications.dart';
 import 'package:fixnear/core/theme/app_theme.dart';
 import 'package:fixnear/core/utils/formatters.dart';
 import 'package:fixnear/core/utils/geo.dart';
+import 'package:fixnear/core/utils/schedule_picker.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
 import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
 import 'package:fixnear/features/jobs/job_detail_screen.dart';
@@ -52,8 +53,6 @@ void main() {
     );
     await tester.enterText(find.byType(TextFormField).last, 'Davao City');
     await tester.tap(find.text('Choose date and time'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('${DateTime.now().day}').last);
     await tester.pumpAndSettle();
     await tester.tap(find.text('OK').last);
     await tester.pumpAndSettle();
@@ -923,6 +922,169 @@ void main() {
     });
   });
 
+  group('booking changes', () {
+    ServiceRequest booked(String status) => ServiceRequest(
+      id: 'job-b',
+      customerUid: 'customer-1',
+      customerName: 'Casey Customer',
+      category: 'Plumbing',
+      description: 'Fix a leaking faucet',
+      serviceArea: 'Davao City',
+      status: status,
+      providerUid: 'provider-1',
+      providerName: 'Provider One',
+      quotedPrice: 850,
+      createdAt: DateTime(2026),
+      scheduledAt: DateTime.now().add(const Duration(days: 2)),
+    );
+
+    Future<void> openRequests(
+      WidgetTester tester,
+      _FakeMarketplaceRepository repository,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: repository,
+            location: _FakeLocation(),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Requests'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('customers cancel a booked job with a reason', (tester) async {
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [booked(RequestStatus.onTheWay)];
+      await openRequests(tester, repository);
+
+      await tester.tap(find.text('Cancel request'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Provider One will be told the job is cancelled.'),
+        findsOneWidget,
+      );
+      await tester.enterText(find.byType(TextField).last, 'Fixed it myself');
+      await tester.tap(find.text('Cancel request').last);
+      await tester.pumpAndSettle();
+      expect(repository.cancelledRequestId, 'job-b');
+      expect(repository.cancelReason, 'Fixed it myself');
+    });
+
+    testWidgets('no cancel or reschedule once the provider has arrived', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [booked(RequestStatus.arrived)];
+      await openRequests(tester, repository);
+      expect(find.text('Cancel request'), findsNothing);
+      expect(find.text('Reschedule'), findsNothing);
+    });
+
+    testWidgets('customers reschedule a booked job', (tester) async {
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [booked(RequestStatus.accepted)];
+      await openRequests(tester, repository);
+      await tester.tap(find.text('Reschedule'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      expect(repository.rescheduled?.$1, 'job-b');
+      expect(repository.rescheduled!.$2.isAfter(DateTime.now()), isTrue);
+    });
+
+    testWidgets('cancelled jobs show who cancelled and why', (tester) async {
+      final repository = _FakeMarketplaceRepository()
+        ..customerRequests = [
+          ServiceRequest(
+            id: 'old',
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            category: 'Cleaning',
+            description: 'Clean the kitchen',
+            serviceArea: 'Davao City',
+            status: RequestStatus.cancelled,
+            createdAt: DateTime(2026),
+            cancelledBy: 'system',
+            cancelReason: 'Closed because no provider was booked in time.',
+          ),
+        ];
+      await openRequests(tester, repository);
+      expect(
+        find.text('Closed because no provider was booked in time.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets("providers withdraw with Can't make it", (tester) async {
+      final repository = _FakeMarketplaceRepository()
+        ..providerJobs = [booked(RequestStatus.onTheWay)];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: repository,
+            location: _FakeLocation(),
+          ),
+        ),
+      );
+      await tester.tap(find.text('My jobs'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text("Can't make it"));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Withdraw'));
+      await tester.pumpAndSettle();
+      expect(repository.withdrawnRequestId, 'job-b');
+    });
+
+    testWidgets('job board shows your trade, with an All services option', (
+      tester,
+    ) async {
+      ServiceRequest open(String id, String category) => ServiceRequest(
+        id: id,
+        customerUid: 'customer-1',
+        customerName: 'Casey Customer',
+        category: category,
+        description: '$category job',
+        serviceArea: 'Davao City',
+        status: RequestStatus.requested,
+        createdAt: DateTime(2026),
+      );
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = const ProviderProfile(
+          id: 'provider-1',
+          name: 'Provider One',
+          category: 'Plumbing',
+          serviceArea: 'Davao City',
+          startingPrice: 500,
+          isAvailable: true,
+        )
+        ..openRequests = [open('p', 'Plumbing'), open('e', 'Electrical')];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: repository,
+            location: _FakeLocation(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Plumbing job'), findsOneWidget);
+      expect(find.text('Electrical job'), findsNothing);
+      await tester.tap(find.text('All services'));
+      await tester.pumpAndSettle();
+      expect(find.text('Electrical job'), findsOneWidget);
+    });
+  });
+
   group('layouts', () {
     final profile = AppUser(
       id: 'customer-1',
@@ -1120,6 +1282,21 @@ void main() {
     }
   });
 
+  test('suggested schedule is an hour out, on a quarter hour', () {
+    expect(
+      suggestedScheduleTime(DateTime(2026, 10, 1, 9, 7)),
+      DateTime(2026, 10, 1, 10, 15),
+    );
+    expect(
+      suggestedScheduleTime(DateTime(2026, 10, 1, 9, 30)),
+      DateTime(2026, 10, 1, 10, 30),
+    );
+    expect(
+      suggestedScheduleTime(DateTime(2026, 10, 1, 23, 50)),
+      DateTime(2026, 10, 2, 1),
+    );
+  });
+
   test('formatters produce readable values', () {
     expect(formatPeso(0), '₱0');
     expect(formatPeso(850), '₱850');
@@ -1187,6 +1364,9 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   ProviderQuote? acceptedQuote;
   Object? acceptQuoteError;
   String? cancelledRequestId;
+  String? cancelReason;
+  String? withdrawnRequestId;
+  (String, DateTime)? rescheduled;
 
   List<ProviderProfile>? providers;
 
@@ -1288,8 +1468,23 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   }
 
   @override
-  Future<void> cancelRequest(String requestId) async {
+  Future<void> cancelRequest(String requestId, {String? reason}) async {
     cancelledRequestId = requestId;
+    cancelReason = reason;
+  }
+
+  @override
+  Future<void> withdrawFromJob(
+    String requestId,
+    String providerUid, {
+    String? reason,
+  }) async {
+    withdrawnRequestId = requestId;
+  }
+
+  @override
+  Future<void> rescheduleRequest(String requestId, DateTime scheduledAt) async {
+    rescheduled = (requestId, scheduledAt);
   }
 
   @override

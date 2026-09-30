@@ -6,6 +6,11 @@ import { distanceKm, readLatLng, serviceAreasMatch, serviceRadiusKm } from './ge
 export type NoticeType =
   | 'new_job'
   | 'direct_job'
+  | 'job_reopened'
+  | 'quote_not_selected'
+  | 'cancelled'
+  | 'rescheduled'
+  | 'reminder'
   | 'new_quote'
   | 'updated_quote'
   | 'quote_accepted'
@@ -57,6 +62,46 @@ export function isNearby(job: Data, provider: Data): boolean {
   return serviceAreasMatch(job.serviceArea, provider.serviceArea);
 }
 
+const sameCategory = (a: unknown, b: unknown) =>
+  typeof a === 'string' && typeof b === 'string' && a.trim().toLowerCase() === b.trim().toLowerCase();
+
+const declined = (job: Data): string[] =>
+  Array.isArray(job.declinedProviderUids)
+    ? job.declinedProviderUids.filter((uid): uid is string => typeof uid === 'string')
+    : [];
+
+/** Online providers in the job's trade, nearby, who haven't declined it. */
+function nearbyProviders(job: Data, providers: ProviderCandidate[]): ProviderCandidate[] {
+  const skip = new Set(declined(job));
+  return providers.filter(
+    ({ uid, data }) =>
+      data.isAvailable === true &&
+      uid !== job.customerUid &&
+      !skip.has(uid) &&
+      sameCategory(job.category, data.category) &&
+      isNearby(job, data),
+  );
+}
+
+/** "Thu, Oct 2, 9:30 AM" in Philippine time. */
+export function formatWhen(value: unknown): string {
+  const date =
+    value && typeof (value as { toDate?: () => Date }).toDate === 'function'
+      ? (value as { toDate: () => Date }).toDate()
+      : value instanceof Date
+        ? value
+        : null;
+  if (!date) return 'a new time';
+  return date.toLocaleString('en-US', {
+    timeZone: 'Asia/Manila',
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /** A job was posted: tell the chosen provider, or online providers nearby. */
 export function noticesForNewJob(
   requestId: string,
@@ -77,11 +122,7 @@ export function noticesForNewJob(
       },
     ];
   }
-  return providers
-    .filter(
-      ({ uid, data }) =>
-        data.isAvailable === true && uid !== job.customerUid && isNearby(job, data),
-    )
+  return nearbyProviders(job, providers)
     .map(({ uid }) => ({
       uid,
       type: 'new_job' as const,
@@ -193,6 +234,106 @@ export function noticesForJobUpdate(requestId: string, before: Data, after: Data
     }
   }
   return notices;
+}
+
+/**
+ * A job went back to being open: a provider declined a job sent to them,
+ * or the booked provider withdrew. Tell the customer, and offer the job to
+ * nearby providers.
+ */
+export function noticesForReopenedJob(
+  requestId: string,
+  before: Data,
+  after: Data,
+  providers: ProviderCandidate[],
+): Notice[] {
+  const wasAssigned = str(before.providerUid);
+  const open = after.status === 'requested' || after.status === 'quoted';
+  if (!wasAssigned || str(after.providerUid) || !open) return [];
+
+  const provider = str(before.providerName, 'The provider');
+  const withdrew = before.status !== 'requested' && before.status !== 'quoted';
+  const reason = str(after.withdrawReason);
+  const notices: Notice[] = [];
+  const customerUid = str(after.customerUid);
+  if (customerUid) {
+    notices.push({
+      uid: customerUid,
+      type: 'job_reopened',
+      requestId,
+      title: withdrew ? `${provider} can't make it` : `${provider} can't take this job`,
+      body: truncate(
+        `${reason ? `${reason}. ` : ''}Your ${str(after.category, 'job').toLowerCase()} request is open to other providers near you.`,
+        160,
+      ),
+    });
+  }
+  for (const { uid } of nearbyProviders(after, providers)) {
+    notices.push({
+      uid,
+      type: 'new_job',
+      requestId,
+      title: `New ${str(after.category, 'service').toLowerCase()} job near you`,
+      body: truncate(`${jobSummary(after)}: ${str(after.description)}`, 140),
+    });
+  }
+  return notices;
+}
+
+/**
+ * The customer accepted one quote: tell the other providers who quoted.
+ * [losers] are the providerUids of quotes still marked "sent".
+ */
+export function noticesForQuotesNotSelected(requestId: string, job: Data, losers: string[]): Notice[] {
+  return losers.map((uid) => ({
+    uid,
+    type: 'quote_not_selected' as const,
+    requestId,
+    title: 'Another provider was booked',
+    body: `${str(job.customerName, 'The customer')} chose a different quote for ${jobSummary(job)}.`,
+  }));
+}
+
+/**
+ * The customer cancelled. Tell the booked provider, or, for an open job,
+ * the providers who had quoted.
+ */
+export function noticesForCancellation(
+  requestId: string,
+  before: Data,
+  after: Data,
+  quotingProviders: string[],
+): Notice[] {
+  if (after.status !== 'cancelled' || before.status === 'cancelled') return [];
+  if (after.cancelledBy === 'system') return [];
+  const reason = str(after.cancelReason);
+  const recipients = str(before.providerUid)
+    ? [str(before.providerUid)]
+    : quotingProviders;
+  return [...new Set(recipients)].map((uid) => ({
+    uid,
+    type: 'cancelled' as const,
+    requestId,
+    title: `${str(after.customerName, 'The customer')} cancelled the job`,
+    body: truncate(`${jobSummary(after)}${reason ? `: ${reason}` : '.'}`, 160),
+  }));
+}
+
+/** The customer moved a booked job: tell the provider the new time. */
+export function noticesForReschedule(requestId: string, before: Data, after: Data): Notice[] {
+  const providerUid = str(after.providerUid);
+  const moved =
+    JSON.stringify(before.scheduledAt ?? null) !== JSON.stringify(after.scheduledAt ?? null);
+  if (!moved || !providerUid || after.status !== 'accepted') return [];
+  return [
+    {
+      uid: providerUid,
+      type: 'rescheduled',
+      requestId,
+      title: `New time: ${formatWhen(after.scheduledAt)}`,
+      body: `${str(after.customerName, 'The customer')} moved ${jobSummary(after)}.`,
+    },
+  ];
 }
 
 /** A chat message was sent: tell the other participant. */

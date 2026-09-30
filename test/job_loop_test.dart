@@ -219,4 +219,116 @@ void main() {
         .data()!;
     expect(raw['baseGeohash'], 'wc326u6nn');
   });
+
+  group('reopening, withdrawing, cancelling, rescheduling', () {
+    Future<String> post({String? directTo}) async {
+      await repository.createRequest(
+        customerUid: customer,
+        customerName: 'Casey Customer',
+        category: 'Plumbing',
+        description: 'Fix a leaking kitchen faucet',
+        serviceArea: 'Davao City',
+        scheduledAt: DateTime.now().add(const Duration(days: 1)),
+        provider: directTo == null
+            ? null
+            : ProviderProfile(
+                id: directTo,
+                name: 'Pat Provider',
+                category: 'Plumbing',
+                serviceArea: 'Davao City',
+                startingPrice: 500,
+                isAvailable: true,
+              ),
+      );
+      return (await onlyRequest()).id;
+    }
+
+    Future<void> book(String id) async {
+      await repository.sendQuote(
+        requestId: id,
+        providerUid: provider,
+        providerName: 'Pat Provider',
+        price: 850,
+        note: 'ok',
+      );
+      await repository.acceptQuote(
+        id,
+        (await repository.watchQuotes(id).first).single,
+      );
+    }
+
+    test('declining a direct job reopens it to other providers', () async {
+      final id = await post(directTo: provider);
+      expect(await repository.watchOpenRequests(otherProvider).first, isEmpty);
+
+      await repository.declineRequest(id, provider);
+      final job = await onlyRequest();
+      expect(job.providerUid, isNull);
+      expect(job.declinedProviderUids, [provider]);
+      expect(await repository.watchOpenRequests(provider).first, isEmpty);
+      expect(
+        (await repository.watchOpenRequests(otherProvider).first).single.id,
+        id,
+      );
+    });
+
+    test('a withdrawing provider reopens the job without them', () async {
+      final id = await post();
+      await book(id);
+      await repository.advanceRequest(id, RequestStatus.onTheWay);
+
+      await repository.withdrawFromJob(id, provider, reason: 'Car broke down');
+      final job = await onlyRequest();
+      expect(job.status, RequestStatus.requested);
+      expect(job.providerUid, isNull);
+      expect(job.quotedPrice, isNull);
+      expect(job.declinedProviderUids, [provider]);
+      expect(
+        (await repository.watchOpenRequests(otherProvider).first).single.id,
+        id,
+      );
+    });
+
+    test(
+      'withdrawing or cancelling is refused once the provider arrives',
+      () async {
+        final id = await post();
+        await book(id);
+        await repository.advanceRequest(id, RequestStatus.onTheWay);
+        await repository.advanceRequest(id, RequestStatus.arrived);
+        await expectLater(
+          () => repository.withdrawFromJob(id, provider),
+          throwsStateError,
+        );
+        await expectLater(() => repository.cancelRequest(id), throwsStateError);
+      },
+    );
+
+    test('customers cancel a booked job with a reason', () async {
+      final id = await post();
+      await book(id);
+      await repository.cancelRequest(id, reason: '  Fixed it myself ');
+      final job = await onlyRequest();
+      expect(job.status, RequestStatus.cancelled);
+      expect(job.cancelledBy, 'customer');
+      expect(job.cancelReason, 'Fixed it myself');
+    });
+
+    test('customers reschedule to a future time only', () async {
+      final id = await post();
+      final newTime = DateTime.now().add(const Duration(days: 3));
+      await repository.rescheduleRequest(id, newTime);
+      expect(
+        (await onlyRequest()).scheduledAt!.difference(newTime).inSeconds,
+        0,
+      );
+      await expectLater(
+        () => repository.rescheduleRequest(
+          id,
+          DateTime.now().subtract(const Duration(hours: 1)),
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
 }

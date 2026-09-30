@@ -16,6 +16,7 @@ import {
   addDoc,
   deleteDoc,
   serverTimestamp,
+  arrayUnion,
 } from 'firebase/firestore';
 import {
   CUSTOMER,
@@ -306,8 +307,8 @@ describe('serviceRequests: cancel and decline', () => {
     await assertSucceeds(updateDoc(doc(dbAs(env, CUSTOMER), REQ), statusUpdate('cancelled')));
   });
 
-  it('rejects cancelling a booked job or someone else’s job', async () => {
-    await seed(env, { [REQ]: storedRequest({ status: 'accepted', providerUid: PROVIDER }) });
+  it('rejects cancelling once the provider has arrived, or someone else’s job', async () => {
+    await seed(env, { [REQ]: storedRequest({ status: 'arrived', providerUid: PROVIDER }) });
     await assertFails(updateDoc(doc(dbAs(env, CUSTOMER), REQ), statusUpdate('cancelled')));
     await seed(env, { [REQ]: storedRequest() });
     await assertFails(updateDoc(doc(dbAs(env, OTHER_CUSTOMER), REQ), statusUpdate('cancelled')));
@@ -317,6 +318,80 @@ describe('serviceRequests: cancel and decline', () => {
     await seed(env, { [REQ]: storedRequest() });
     await assertSucceeds(updateDoc(doc(dbAs(env, PROVIDER), REQ), declineUpdate(PROVIDER)));
     await assertFails(updateDoc(doc(dbAs(env, PROVIDER), REQ), declineUpdate(OTHER_PROVIDER)));
+  });
+});
+
+describe('reopening, withdrawing, cancelling after booking, rescheduling', () => {
+  const later = () => Timestamp.fromDate(new Date(Date.now() + 3 * 86400000));
+
+  it('the provider a job was sent to can decline it, reopening it to everyone', async () => {
+    await seed(env, { [REQ]: storedRequest({ providerUid: PROVIDER, providerName: 'Pat' }) });
+    const reopen = {
+      providerUid: null,
+      providerName: null,
+      declinedProviderUids: arrayUnion(PROVIDER),
+      updatedAt: serverTimestamp(),
+    };
+    await assertFails(updateDoc(doc(dbAs(env, OTHER_PROVIDER), REQ), reopen));
+    await assertSucceeds(updateDoc(doc(dbAs(env, PROVIDER), REQ), reopen));
+  });
+
+  it('the booked provider can withdraw before arriving, not after', async () => {
+    const withdraw = {
+      status: 'requested',
+      providerUid: null,
+      providerName: null,
+      quotedPrice: null,
+      quoteNote: null,
+      declinedProviderUids: arrayUnion(PROVIDER),
+      withdrawReason: 'Car broke down',
+      updatedAt: serverTimestamp(),
+    };
+    await seed(env, { [REQ]: storedRequest({ status: 'on_the_way', providerUid: PROVIDER, quotedPrice: 850 }) });
+    await assertFails(updateDoc(doc(dbAs(env, OTHER_PROVIDER), REQ), withdraw));
+    await assertSucceeds(updateDoc(doc(dbAs(env, PROVIDER), REQ), withdraw));
+
+    await seed(env, { [REQ]: storedRequest({ status: 'arrived', providerUid: PROVIDER, quotedPrice: 850 }) });
+    await assertFails(updateDoc(doc(dbAs(env, PROVIDER), REQ), withdraw));
+  });
+
+  it('a withdrawal must clear the booking and add only the provider to declined', async () => {
+    await seed(env, { [REQ]: storedRequest({ status: 'accepted', providerUid: PROVIDER, quotedPrice: 850 }) });
+    await assertFails(updateDoc(doc(dbAs(env, PROVIDER), REQ), {
+      status: 'requested', providerUid: null, providerName: null, quotedPrice: 850,
+      declinedProviderUids: arrayUnion(PROVIDER), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(dbAs(env, PROVIDER), REQ), {
+      status: 'requested', providerUid: null, providerName: null, quotedPrice: null,
+      declinedProviderUids: arrayUnion(PROVIDER, OTHER_PROVIDER), updatedAt: serverTimestamp(),
+    }));
+  });
+
+  it('the customer can cancel a booked job with a reason until the provider arrives', async () => {
+    const cancel = { status: 'cancelled', cancelledBy: 'customer', cancelReason: 'Fixed it myself', updatedAt: serverTimestamp() };
+    await seed(env, { [REQ]: storedRequest({ status: 'on_the_way', providerUid: PROVIDER }) });
+    await assertSucceeds(updateDoc(doc(dbAs(env, CUSTOMER), REQ), cancel));
+    await seed(env, { [REQ]: storedRequest({ status: 'arrived', providerUid: PROVIDER }) });
+    await assertFails(updateDoc(doc(dbAs(env, CUSTOMER), REQ), cancel));
+  });
+
+  it('rejects pretending to be the system or an overlong reason', async () => {
+    await seed(env, { [REQ]: storedRequest() });
+    const db = dbAs(env, CUSTOMER);
+    await assertFails(updateDoc(doc(db, REQ), { status: 'cancelled', cancelledBy: 'system', updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, REQ), { status: 'cancelled', cancelReason: 'x'.repeat(201), updatedAt: serverTimestamp() }));
+  });
+
+  it('the customer can move an open or booked job to a future time only', async () => {
+    await seed(env, { [REQ]: storedRequest({ status: 'accepted', providerUid: PROVIDER }) });
+    const db = dbAs(env, CUSTOMER);
+    await assertSucceeds(updateDoc(doc(db, REQ), { scheduledAt: later(), updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(doc(db, REQ), {
+      scheduledAt: Timestamp.fromDate(new Date(Date.now() - 3600000)), updatedAt: serverTimestamp(),
+    }));
+    await assertFails(updateDoc(doc(dbAs(env, PROVIDER), REQ), { scheduledAt: later(), updatedAt: serverTimestamp() }));
+    await seed(env, { [REQ]: storedRequest({ status: 'in_progress', providerUid: PROVIDER }) });
+    await assertFails(updateDoc(doc(db, REQ), { scheduledAt: later(), updatedAt: serverTimestamp() }));
   });
 });
 

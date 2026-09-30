@@ -27,6 +27,11 @@ service cloud.firestore {
         && (hash == null || (hash is string && hash.size() <= 12));
     }
 
+    // Optional short reason for cancelling or withdrawing.
+    function validReason(reason) {
+      return reason == null || (reason is string && reason.size() <= 200);
+    }
+
     // Profile photos are Cloudinary links (or absent).
     function validPhotoUrl(data) {
       let url = data.get('photoUrl', null);
@@ -161,10 +166,55 @@ service cloud.firestore {
                   || resource.data.providerUid == request.auth.uid)))));
 
       allow update: if request.auth != null
+        // Customer cancels, before the provider has arrived.
         && ((resource.data.customerUid == request.auth.uid
-            && resource.data.status in ['requested', 'quoted']
+            && resource.data.status in ['requested', 'quoted', 'accepted', 'on_the_way']
             && request.resource.data.status == 'cancelled'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt', 'cancelledBy', 'cancelReason'
+            ])
+            && request.resource.data.get('cancelledBy', 'customer') == 'customer'
+            && validReason(request.resource.data.get('cancelReason', null))
+            && request.resource.data.updatedAt is timestamp)
+          // Customer reschedules an open or booked job to a future time.
+          || (resource.data.customerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted', 'accepted']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'scheduledAt', 'updatedAt'
+            ])
+            && request.resource.data.scheduledAt is timestamp
+            && request.resource.data.scheduledAt > request.time
+            && request.resource.data.updatedAt is timestamp)
+          // The provider a job was sent to declines it: it reopens to
+          // everyone nearby.
+          || (signedInProvider()
+            && resource.data.providerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'providerUid', 'providerName', 'declinedProviderUids', 'updatedAt'
+            ])
+            && request.resource.data.providerUid == null
+            && request.resource.data.providerName == null
+            && request.resource.data.declinedProviderUids.toSet()
+              == resource.data.declinedProviderUids.toSet().union([request.auth.uid].toSet())
+            && request.resource.data.updatedAt is timestamp)
+          // The booked provider withdraws before arriving: the job reopens
+          // for new quotes, without them.
+          || (signedInProvider()
+            && resource.data.providerUid == request.auth.uid
+            && resource.data.status in ['accepted', 'on_the_way']
+            && request.resource.data.status == 'requested'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'providerUid', 'providerName', 'quotedPrice', 'quoteNote',
+              'declinedProviderUids', 'withdrawReason', 'updatedAt'
+            ])
+            && request.resource.data.providerUid == null
+            && request.resource.data.providerName == null
+            && request.resource.data.get('quotedPrice', null) == null
+            && request.resource.data.get('quoteNote', null) == null
+            && request.resource.data.declinedProviderUids.toSet()
+              == resource.data.declinedProviderUids.toSet().union([request.auth.uid].toSet())
+            && validReason(request.resource.data.get('withdrawReason', null))
             && request.resource.data.updatedAt is timestamp)
           || (resource.data.customerUid == request.auth.uid
             && resource.data.status in ['requested', 'quoted']

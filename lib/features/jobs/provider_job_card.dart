@@ -7,6 +7,7 @@ import '../../core/utils/attention.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/job_photos.dart';
+import '../../core/widgets/reason_dialog.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
@@ -66,7 +67,32 @@ class ProviderJobActions {
         context,
         () => repository.declineRequest(request.id, providerUid),
         failureMessage: 'Could not decline the request.',
+        successMessage: request.providerUid == providerUid
+            ? 'Declined. The job is now open to other providers.'
+            : null,
       );
+
+  Future<void> withdraw(BuildContext context, ServiceRequest request) async {
+    final reason = await showReasonDialog(
+      context,
+      title: "Can't make it?",
+      message:
+          '${request.customerName} will be told, and the job reopens for other providers to quote.',
+      confirmLabel: 'Withdraw',
+      dismissLabel: 'Keep job',
+    );
+    if (reason == null || !context.mounted) return;
+    await runWithFeedback(
+      context,
+      () => repository.withdrawFromJob(
+        request.id,
+        providerUid,
+        reason: reason.isEmpty ? null : reason,
+      ),
+      failureMessage: 'Could not withdraw from this job.',
+      successMessage: 'You withdrew from the job.',
+    );
+  }
 
   Future<void> advance(BuildContext context, ServiceRequest request) {
     final next = nextStatus(request);
@@ -183,6 +209,13 @@ class ProviderJobCard extends StatelessWidget {
               ),
             if (request.quotedPrice != null)
               Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
+            if (request.status == RequestStatus.cancelled)
+              Text(
+                request.cancelReason == null
+                    ? 'The customer cancelled this job.'
+                    : 'The customer cancelled: ${request.cancelReason}',
+                style: textTheme.bodySmall,
+              ),
             if (request.paymentStatus == 'paid')
               Text(
                 'Payment received',
@@ -217,6 +250,13 @@ class ProviderJobCard extends StatelessWidget {
                   FilledButton(
                     onPressed: () => actions.sendQuote(context, request),
                     child: const Text('Send quote'),
+                  ),
+                if (_isAssigned &&
+                    (request.status == RequestStatus.accepted ||
+                        request.status == RequestStatus.onTheWay))
+                  TextButton(
+                    onPressed: () => actions.withdraw(context, request),
+                    child: const Text("Can't make it"),
                   ),
                 if (nextLabel != null)
                   FilledButton(

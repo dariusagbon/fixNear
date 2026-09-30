@@ -74,6 +74,7 @@ beforeEach(async () => {
   ctx = { db, messaging, appUrl: 'https://fixnear.example/' };
   await db.doc('providerProfiles/near').set({
     name: 'Near Provider',
+    category: 'Plumbing',
     serviceArea: 'Davao City',
     isAvailable: true,
     baseLatitude: 7.0996,
@@ -82,6 +83,7 @@ beforeEach(async () => {
   });
   await db.doc('providerProfiles/far').set({
     name: 'Far Provider',
+    category: 'Plumbing',
     serviceArea: 'Davao City',
     isAvailable: true,
     baseLatitude: 7.0187,
@@ -90,6 +92,7 @@ beforeEach(async () => {
   });
   await db.doc('providerProfiles/offline').set({
     name: 'Offline Provider',
+    category: 'Plumbing',
     serviceArea: 'Davao City',
     isAvailable: false,
     baseLatitude: 7.0996,
@@ -175,6 +178,39 @@ describe('handlers', () => {
     ]);
     assert.equal(messaging.sent[0].notification?.title, 'Near Provider is on the way');
     assert.equal(messaging.sent[2].android?.notification?.tag, 'job-5-chat');
+  });
+
+  it('closes losing quotes when one is accepted and tells those providers', async () => {
+    const quoted = { ...JOB, status: 'quoted' };
+    await db.doc('serviceRequests/job-6').set(quoted);
+    for (const uid of ['near', 'far']) {
+      await db.doc(`serviceRequests/job-6/quotes/${uid}`).set({ providerUid: uid, price: 800, status: 'sent' });
+    }
+    const booked = { ...quoted, status: 'accepted', providerUid: 'near', providerName: 'Near Provider' };
+    await db.doc('serviceRequests/job-6/quotes/near').update({ status: 'accepted' });
+    await handleJobUpdated(ctx, 'job-6', quoted, booked);
+
+    const far = (await db.doc('serviceRequests/job-6/quotes/far').get()).data();
+    const near = (await db.doc('serviceRequests/job-6/quotes/near').get()).data();
+    assert.equal(far?.status, 'not_selected');
+    assert.equal(near?.status, 'accepted');
+    assert.deepEqual(messaging.tokens(), [['far-phone']]);
+    assert.equal(messaging.sent[0].data?.type, 'quote_not_selected');
+  });
+
+  it('reopens a declined direct job to the customer and nearby providers', async () => {
+    const direct = { ...JOB, providerUid: 'far', providerName: 'Far Provider' };
+    const reopened = { ...direct, providerUid: null, providerName: null, declinedProviderUids: ['far'] };
+    await handleJobUpdated(ctx, 'job-7', direct, reopened);
+    assert.deepEqual(messaging.tokens(), [['customer-phone'], ['near-laptop', 'near-phone']]);
+    assert.deepEqual(messaging.sent.map((m) => m.data?.type), ['job_reopened', 'new_job']);
+  });
+
+  it('tells quoting providers when an open job is cancelled', async () => {
+    const quoted = { ...JOB, status: 'quoted' };
+    await db.doc('serviceRequests/job-8/quotes/far').set({ providerUid: 'far', price: 800, status: 'sent' });
+    await handleJobUpdated(ctx, 'job-8', quoted, { ...quoted, status: 'cancelled', cancelledBy: 'customer' });
+    assert.deepEqual(messaging.tokens(), [['far-phone']]);
   });
 
   it('does nothing for a quote on a job that no longer exists', async () => {
