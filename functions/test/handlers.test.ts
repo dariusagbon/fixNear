@@ -11,6 +11,7 @@ import {
   handleJobCreated,
   handleJobUpdated,
   handleMessageCreated,
+  handleDailySweep,
   handleQuoteWritten,
   handleUserDeleted,
 } from '../src/handlers';
@@ -247,6 +248,24 @@ describe('handlers', () => {
     assert.equal(done?.customerName, 'Deleted user');
   });
 
+  it('daily sweep expires stale jobs and sends reminders', async () => {
+    const now = Date.parse('2026-10-10T01:00:00Z');
+    const ago = (days: number) => new Date(now - days * 86400000);
+    await db.doc('serviceRequests/stale').set({ ...JOB, scheduledAt: ago(2) });
+    await db.doc('serviceRequests/fresh').set({ ...JOB, scheduledAt: ago(0.2) });
+    await db.doc('serviceRequests/unconfirmed').set({
+      ...JOB, status: 'provider_completed', providerUid: 'near', updatedAt: ago(3),
+    });
+
+    const result = await handleDailySweep(ctx, now);
+    assert.equal(result.expired, 1);
+    const stale = (await db.doc('serviceRequests/stale').get()).data();
+    assert.equal(stale?.status, 'cancelled');
+    assert.equal(stale?.cancelledBy, 'system');
+    assert.equal((await db.doc('serviceRequests/fresh').get()).data()?.status, 'requested');
+    assert.deepEqual(messaging.sent.map((m) => m.data?.type), ['cancelled', 'reminder']);
+  });
+
   it('does nothing for a quote on a job that no longer exists', async () => {
     const result = await handleQuoteWritten(ctx, 'missing', undefined, { status: 'sent', providerUid: 'near' });
     assert.equal(result.sent, 0);
@@ -263,7 +282,14 @@ describe('deployment settings', () => {
     );
     assert.deepEqual(
       exported.map(([name]) => name).sort(),
-      ['cleanUpDeletedUser', 'notifyJobPosted', 'notifyJobUpdated', 'notifyMessageSent', 'notifyQuoteWritten'],
+      [
+        'cleanUpDeletedUser',
+        'dailyJobSweep',
+        'notifyJobPosted',
+        'notifyJobUpdated',
+        'notifyMessageSent',
+        'notifyQuoteWritten',
+      ],
     );
     for (const [name, fn] of exported) {
       const endpoint = (fn as { __endpoint: { region?: string[] } }).__endpoint;

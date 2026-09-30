@@ -353,3 +353,83 @@ export function noticesForMessage(requestId: string, job: Data, message: Data): 
     },
   ];
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const millis = (value: unknown): number | null => {
+  if (value && typeof (value as { toMillis?: () => number }).toMillis === 'function') {
+    return (value as { toMillis: () => number }).toMillis();
+  }
+  return value instanceof Date ? value.getTime() : null;
+};
+
+export interface DailyAction {
+  requestId: string;
+  /** Close the job as expired (system cancellation). */
+  expire: boolean;
+  notice: Notice | null;
+}
+
+/**
+ * The daily sweep. For each job:
+ * - open more than a day past its scheduled time: close it and tell the
+ *   customer;
+ * - marked done by the provider over 2 days ago: remind the customer;
+ * - cash recorded over 2 days ago: remind the provider.
+ */
+export function dailyActionFor(requestId: string, job: Data, now: number): DailyAction | null {
+  const status = str(job.status);
+  const scheduled = millis(job.scheduledAt);
+  const updated = millis(job.updatedAt);
+  const customerUid = str(job.customerUid);
+  const providerUid = str(job.providerUid);
+
+  if ((status === 'requested' || status === 'quoted') && scheduled !== null && now - scheduled > DAY_MS) {
+    return {
+      requestId,
+      expire: true,
+      notice: customerUid
+        ? {
+            uid: customerUid,
+            type: 'cancelled',
+            requestId,
+            title: `Your ${str(job.category, 'service').toLowerCase()} request expired`,
+            body: 'No provider was booked before the scheduled time. Post it again with a new date.',
+          }
+        : null,
+    };
+  }
+  if (status === 'provider_completed' && updated !== null && now - updated > 2 * DAY_MS && customerUid) {
+    return {
+      requestId,
+      expire: false,
+      notice: {
+        uid: customerUid,
+        type: 'reminder',
+        requestId,
+        title: 'Please confirm your job is complete',
+        body: `${str(job.providerName, 'Your provider')} marked ${jobSummary(job)} as done.`,
+      },
+    };
+  }
+  if (
+    status === 'completed' &&
+    job.paymentStatus === 'pending_provider_confirmation' &&
+    updated !== null &&
+    now - updated > 2 * DAY_MS &&
+    providerUid
+  ) {
+    return {
+      requestId,
+      expire: false,
+      notice: {
+        uid: providerUid,
+        type: 'reminder',
+        requestId,
+        title: 'Confirm the cash payment',
+        body: `${str(job.customerName, 'The customer')} recorded paying ${peso(job.quotedPrice) || 'cash'} for ${jobSummary(job)}.`,
+      },
+    };
+  }
+  return null;
+}

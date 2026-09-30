@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  dailyActionFor,
   formatWhen,
   noticesForCancellation,
   noticesForJobUpdate,
@@ -269,5 +270,41 @@ describe('quotes not selected, cancellations and rescheduling', () => {
     assert.equal(notice.title, 'New time: Sat, Oct 3, 9:30 AM');
     assert.deepEqual(noticesForReschedule('r1', booked, { ...booked }), []);
     assert.equal(formatWhen(null), 'a new time');
+  });
+});
+
+describe('daily sweep', () => {
+  const NOW = Date.parse('2026-10-10T01:00:00Z');
+  const daysAgo = (n: number) => new Date(NOW - n * 86400000);
+
+  it('expires open jobs more than a day past their date', () => {
+    const action = dailyActionFor('r1', job({ scheduledAt: daysAgo(2) }), NOW);
+    assert.equal(action?.expire, true);
+    assert.equal(action?.notice?.uid, 'customer-1');
+    assert.equal(action?.notice?.title, 'Your plumbing request expired');
+    assert.equal(dailyActionFor('r1', job({ scheduledAt: daysAgo(0.5) }), NOW), null);
+    assert.equal(dailyActionFor('r1', job({ status: 'accepted', scheduledAt: daysAgo(5) }), NOW), null);
+  });
+
+  it('reminds customers to confirm finished work after two days', () => {
+    const done = job({ status: 'provider_completed', providerUid: 'p1', providerName: 'Pat', updatedAt: daysAgo(3) });
+    const action = dailyActionFor('r1', done, NOW);
+    assert.equal(action?.expire, false);
+    assert.equal(action?.notice?.uid, 'customer-1');
+    assert.equal(dailyActionFor('r1', { ...done, updatedAt: daysAgo(1) }, NOW), null);
+  });
+
+  it('reminds providers to confirm recorded cash after two days', () => {
+    const paid = job({
+      status: 'completed',
+      paymentStatus: 'pending_provider_confirmation',
+      providerUid: 'p1',
+      quotedPrice: 850,
+      updatedAt: daysAgo(3),
+    });
+    const action = dailyActionFor('r1', paid, NOW);
+    assert.equal(action?.notice?.uid, 'p1');
+    assert.match(action?.notice?.body ?? '', /₱850/);
+    assert.equal(dailyActionFor('r1', { ...paid, paymentStatus: 'paid' }, NOW), null);
   });
 });

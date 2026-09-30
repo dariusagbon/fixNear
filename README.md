@@ -15,13 +15,22 @@ customer and confirmed by the provider.
 - **Customers**: search providers by category, with distance when location is
   allowed; post a job with a schedule, a map pin or current location (typed area
   and landmark as a fallback) and up to 5 photos; compare and accept quotes;
-  chat; confirm completion; record cash payment; edit profile and photo
+  reschedule, or cancel (with a reason) until the provider arrives; chat;
+  confirm completion; record cash payment; edit profile and photo
   (Cloudinary).
 - **Providers**: go online or offline; set a base location and a service radius
   (2–50 km) on the **Service** tab; see a job board with jobs sent to them
-  first, then jobs within their radius nearest first ("2.3 km away"); quote,
-  decline, move jobs forward, confirm cash, track earnings; edit their name,
-  phone and photo (tap their name at the top), which customers see.
+  first, then jobs in their trade within their radius nearest first ("2.3 km
+  away"), with an "All services" option; quote, decline (a job sent directly
+  to them then reopens to others), withdraw before arriving ("Can't make it"),
+  move jobs forward, confirm cash, track earnings; edit their name, phone and
+  photo (tap their name at the top), which customers see.
+- **Accounts**: password reset, email verification, and account deletion
+  (Edit profile → Delete account), which is refused while a job is active.
+- **Automatic upkeep** (Cloud Functions): losing quotes are closed when one is
+  accepted; every morning, open jobs more than a day past their date are
+  closed, and customers and providers are reminded of confirmations waiting on
+  them.
 - **Push notifications** for new jobs, quotes, bookings, status changes,
   payments and chat. Tapping one opens the job's detail page.
 
@@ -132,8 +141,13 @@ Notification taps open the job detail page. On web, notifications link to
 | `notifyQuoteWritten` | quote created / changed | customer (new or updated quote); provider (quote accepted) |
 | `notifyJobUpdated` | job updated | customer on each provider step; provider when cash is recorded; customer when cash is confirmed |
 | `notifyMessageSent` | chat message | the other participant |
+| `notifyJobUpdated` (also) | declined direct job, provider withdrawal, quote accepted, cancellation, reschedule | customer and nearby providers when a job reopens; losing providers; booked or quoting providers on cancellation; booked provider on a new time |
+| `cleanUpDeletedUser` | login deleted | removes tokens and listing, withdraws open quotes, anonymises names on past jobs |
+| `dailyJobSweep` | every day 9:00 Asia/Manila | closes stale open jobs; reminds customers to confirm work and providers to confirm cash |
 
-Deploying needs the **Blaze (pay-as-you-go)** plan. Firestore triggers must run
+Deploying needs the **Blaze (pay-as-you-go)** plan (the daily sweep also uses
+Cloud Scheduler). Deploy the Firestore index too:
+`npx firebase-tools deploy --only firestore:indexes --project fixnear-d5c1c`. Firestore triggers must run
 in the same region as your Firestore database. If the database isn't in
 `asia-southeast1`, change `REGION` in `functions/src/index.ts`.
 

@@ -1394,6 +1394,11 @@ void main() {
             profile: profile,
             uploader: uploader(),
             onSave: ({required name, phone, photoUrl}) async {},
+            account: AccountControls(
+              emailVerified: false,
+              sendVerificationEmail: () async {},
+              deleteAccount: (_) async {},
+            ),
           ),
         );
         await checkGuidelines(tester);

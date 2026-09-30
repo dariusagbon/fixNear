@@ -15,9 +15,11 @@ import {
 } from 'firebase-functions/v2/firestore';
 import { defineString } from 'firebase-functions/params';
 import * as functionsV1 from 'firebase-functions/v1';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import type { DeliveryContext } from './deliver';
 import {
   handleJobCreated,
+  handleDailySweep,
   handleJobUpdated,
   handleMessageCreated,
   handleQuoteWritten,
@@ -80,3 +82,15 @@ export const cleanUpDeletedUser = functionsV1
   .onDelete(async (user) => {
     await handleUserDeleted(context(), user.uid);
   });
+
+/**
+ * Every day at 9:00 in the Philippines: close open jobs more than a day
+ * past their date, remind customers to confirm finished work and
+ * providers to confirm cash. Uses Cloud Scheduler (Blaze plan).
+ */
+export const dailyJobSweep = onSchedule(
+  { schedule: '0 9 * * *', timeZone: 'Asia/Manila' },
+  async () => {
+    await handleDailySweep(context());
+  },
+);

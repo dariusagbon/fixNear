@@ -2,6 +2,7 @@
 
 import { deliver, type DeliveryContext } from './deliver';
 import {
+  dailyActionFor,
   noticesForCancellation,
   noticesForJobUpdate,
   noticesForMessage,
@@ -131,4 +132,28 @@ export async function handleUserDeleted(ctx: DeliveryContext, uid: string) {
     quotesWithdrawn: quotes.docs.filter((doc) => doc.data().status === 'sent').length,
     jobsAnonymised: asCustomer.size + asProvider.size,
   };
+}
+
+/** The daily sweep: expire stale open jobs and send reminders. */
+export async function handleDailySweep(ctx: DeliveryContext, now = Date.now()) {
+  const statuses = ['requested', 'quoted', 'provider_completed', 'completed'];
+  const snapshot = await ctx.db.collection('serviceRequests').where('status', 'in', statuses).get();
+  const notices: Notice[] = [];
+  let expired = 0;
+  for (const doc of snapshot.docs) {
+    const action = dailyActionFor(doc.id, doc.data(), now);
+    if (!action) continue;
+    if (action.expire) {
+      await doc.ref.update({
+        status: 'cancelled',
+        cancelledBy: 'system',
+        cancelReason: 'Closed because no provider was booked before the scheduled time.',
+        updatedAt: new Date(now),
+      });
+      expired++;
+    }
+    if (action.notice) notices.push(action.notice);
+  }
+  const delivery = await deliver(ctx, notices);
+  return { expired, reminders: notices.length - expired, ...delivery };
 }
