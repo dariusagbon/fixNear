@@ -5,10 +5,13 @@ import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
 import '../../core/services/cloudinary_service.dart';
+import '../../core/services/location_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
+import '../../core/utils/geo.dart';
 import '../customer/customer_marketplace_screen.dart';
+import '../location/base_location_field.dart';
 import '../notifications/notification_host.dart';
 import '../profile/edit_profile_screen.dart';
 import '../provider/provider_home_screen.dart';
@@ -149,9 +152,16 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, this.authService});
+  const LoginScreen({
+    super.key,
+    this.authService,
+    this.location = const GeolocatorLocationService(),
+  });
 
   final AuthService? authService;
+
+  /// Device location, for a provider's optional base location at sign-up.
+  final LocationService location;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -169,6 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   UserRole _role = UserRole.customer;
   String _serviceCategory = serviceCategories.first;
+  LatLngPoint? _baseLocation;
+  double _serviceRadiusKm = defaultServiceRadiusKm;
   String? _errorMessage;
 
   @override
@@ -203,6 +215,8 @@ class _LoginScreenState extends State<LoginScreen> {
           startingPrice: _role == UserRole.provider
               ? int.tryParse(_startingPriceController.text.trim())
               : null,
+          baseLocation: _role == UserRole.provider ? _baseLocation : null,
+          serviceRadiusKm: _serviceRadiusKm,
         );
         // Best effort: the account works either way; the profile screen
         // offers to resend.
@@ -356,6 +370,29 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ? 'Enter a valid starting price'
                                 : null;
                           },
+                        ),
+                        const SizedBox(height: 18),
+                        Text(
+                          'Where you start from (optional)',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Nearby jobs show first and you get notified about '
+                          'jobs within your radius. You can change this later '
+                          'on the Service tab.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 8),
+                        BaseLocationField(
+                          base: _baseLocation,
+                          radiusKm: _serviceRadiusKm,
+                          location: widget.location,
+                          enabled: !_isSubmitting,
+                          onBaseChanged: (point) =>
+                              setState(() => _baseLocation = point),
+                          onRadiusChanged: (km) =>
+                              setState(() => _serviceRadiusKm = km),
                         ),
                         const SizedBox(height: 14),
                       ],

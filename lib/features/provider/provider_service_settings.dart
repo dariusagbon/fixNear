@@ -7,7 +7,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/geo.dart';
 import '../../core/widgets/status_chip.dart';
-import '../location/map_pin_picker.dart';
+import '../location/base_location_field.dart';
 
 /// The provider's "Service" tab: what they offer, where they start from and
 /// how far they travel. The job board and new-job notifications use the
@@ -17,12 +17,16 @@ class ProviderServiceSettings extends StatelessWidget {
     required this.providerUid,
     required this.repository,
     required this.location,
+    this.header,
     super.key,
   });
 
   final String providerUid;
   final MarketplaceRepository repository;
   final LocationService location;
+
+  /// Shown above the settings (the provider's photo card).
+  final Widget? header;
 
   @override
   Widget build(BuildContext context) {
@@ -53,6 +57,7 @@ class ProviderServiceSettings extends StatelessWidget {
           profile: profile,
           repository: repository,
           location: location,
+          header: header,
         );
       },
     );
@@ -64,12 +69,14 @@ class _SettingsForm extends StatefulWidget {
     required this.profile,
     required this.repository,
     required this.location,
+    this.header,
     super.key,
   });
 
   final ProviderProfile profile;
   final MarketplaceRepository repository;
   final LocationService location;
+  final Widget? header;
 
   @override
   State<_SettingsForm> createState() => _SettingsFormState();
@@ -88,45 +95,13 @@ class _SettingsFormState extends State<_SettingsForm> {
       : serviceCategories.first;
   late LatLngPoint? _base = widget.profile.baseLocation;
   late double _radius = widget.profile.serviceRadiusKm;
-  bool _locating = false;
   bool _saving = false;
-  String? _locationError;
 
   @override
   void dispose() {
     _areaController.dispose();
     _priceController.dispose();
     super.dispose();
-  }
-
-  Future<void> _useCurrentLocation() async {
-    setState(() {
-      _locating = true;
-      _locationError = null;
-    });
-    try {
-      final here = await widget.location.requestCurrent();
-      if (mounted) setState(() => _base = here);
-    } on LocationUnavailable catch (error) {
-      if (mounted) setState(() => _locationError = error.message);
-    } finally {
-      if (mounted) setState(() => _locating = false);
-    }
-  }
-
-  Future<void> _pickOnMap() async {
-    final point = await pickLocationOnMap(
-      context,
-      location: widget.location,
-      initial: _base,
-      title: 'Where do you start from?',
-    );
-    if (point != null && mounted) {
-      setState(() {
-        _base = point;
-        _locationError = null;
-      });
-    }
   }
 
   Future<void> _save() async {
@@ -158,6 +133,10 @@ class _SettingsFormState extends State<_SettingsForm> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
+            if (widget.header != null) ...[
+              widget.header!,
+              const SizedBox(height: 16),
+            ],
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
@@ -232,75 +211,13 @@ class _SettingsFormState extends State<_SettingsForm> {
                       style: textTheme.bodySmall,
                     ),
                     const SizedBox(height: 12),
-                    Row(
-                      children: [
-                        const Icon(Icons.home_work_outlined),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            _base == null
-                                ? 'No base location yet'
-                                : 'Base location: ${_base!.latitude.toStringAsFixed(4)}, ${_base!.longitude.toStringAsFixed(4)}',
-                            style: textTheme.bodyMedium?.copyWith(
-                              color: AppTheme.ink,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_locationError != null)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          _locationError!,
-                          style: const TextStyle(color: AppTheme.error),
-                        ),
-                      ),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        TextButton.icon(
-                          onPressed: _locating ? null : _useCurrentLocation,
-                          icon: const Icon(Icons.my_location_rounded),
-                          label: Text(
-                            _locating
-                                ? 'Finding you…'
-                                : 'Use my current location',
-                          ),
-                        ),
-                        if (mapsEnabled)
-                          TextButton.icon(
-                            onPressed: _pickOnMap,
-                            icon: const Icon(Icons.map_outlined),
-                            label: const Text('Pick on map'),
-                          ),
-                        if (_base != null)
-                          TextButton(
-                            onPressed: () => setState(() => _base = null),
-                            child: const Text('Clear'),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      'Service radius: ${_radius.round()} km',
-                      style: textTheme.bodyMedium?.copyWith(
-                        color: AppTheme.ink,
-                      ),
-                    ),
-                    Slider(
-                      value: _radius,
-                      min: minServiceRadiusKm,
-                      max: maxServiceRadiusKm,
-                      divisions: (maxServiceRadiusKm - minServiceRadiusKm)
-                          .round(),
-                      label: '${_radius.round()} km',
-                      semanticFormatterCallback: (value) =>
-                          '${value.round()} kilometres',
-                      onChanged: (value) =>
-                          setState(() => _radius = value.roundToDouble()),
+                    BaseLocationField(
+                      base: _base,
+                      radiusKm: _radius,
+                      location: widget.location,
+                      enabled: !_saving,
+                      onBaseChanged: (point) => setState(() => _base = point),
+                      onRadiusChanged: (km) => setState(() => _radius = km),
                     ),
                   ],
                 ),

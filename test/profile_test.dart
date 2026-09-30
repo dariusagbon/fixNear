@@ -125,6 +125,13 @@ void main() {
       );
     });
 
+    test('defaults to the FixNear Cloudinary account', () {
+      final config = CloudinaryConfig.fromEnvironment();
+      expect(config.cloudName, 'gp7e9yws');
+      expect(config.uploadPreset, 'fixnearAvatar');
+      expect(config.isConfigured, isTrue);
+    });
+
     test('refuses uploads when not configured or too large', () {
       expect(
         CloudinaryService(

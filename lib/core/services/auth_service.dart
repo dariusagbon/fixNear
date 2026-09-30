@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/app_user.dart';
+import '../utils/geo.dart';
 
 class AuthService {
   AuthService({FirebaseAuth? firebaseAuth, FirebaseFirestore? firestore})
@@ -30,6 +31,8 @@ class AuthService {
     String? serviceCategory,
     String? serviceArea,
     int? startingPrice,
+    LatLngPoint? baseLocation,
+    double serviceRadiusKm = defaultServiceRadiusKm,
   }) async {
     if (role == UserRole.provider &&
         (serviceCategory == null ||
@@ -66,6 +69,13 @@ class AuthService {
         'startingPrice': startingPrice,
         'isAvailable': true,
         'createdAt': FieldValue.serverTimestamp(),
+        // Optional: providers can also set this later on the Service tab.
+        if (baseLocation != null) ...{
+          'baseLatitude': baseLocation.latitude,
+          'baseLongitude': baseLocation.longitude,
+          'baseGeohash': encodeGeohash(baseLocation),
+          'serviceRadiusKm': clampServiceRadiusKm(serviceRadiusKm),
+        },
       });
     }
 

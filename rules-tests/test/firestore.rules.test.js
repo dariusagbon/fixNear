@@ -77,6 +77,37 @@ describe('users (registration and profile)', () => {
     await assertSucceeds(batch.commit());
   });
 
+  it('lets a new provider set their base location at sign-up', async () => {
+    const db = dbAs(env, 'new-pro');
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users/new-pro'), userDoc({
+      email: 'p@example.com', name: 'New Pro', role: 'provider',
+    }));
+    batch.set(doc(db, 'providerProfiles/new-pro'), {
+      ...providerProfileDoc({ name: 'New Pro' }),
+      baseLatitude: 7.07,
+      baseLongitude: 125.61,
+      baseGeohash: 'wc5qg4b5x',
+      serviceRadiusKm: 10,
+    });
+    await assertSucceeds(batch.commit());
+  });
+
+  it('rejects a bad base location at sign-up', async () => {
+    const db = dbAs(env, 'new-pro');
+    const batch = writeBatch(db);
+    batch.set(doc(db, 'users/new-pro'), userDoc({
+      email: 'p@example.com', name: 'New Pro', role: 'provider',
+    }));
+    batch.set(doc(db, 'providerProfiles/new-pro'), {
+      ...providerProfileDoc({ name: 'New Pro' }),
+      baseLatitude: 700,
+      baseLongitude: 125.61,
+      serviceRadiusKm: 500,
+    });
+    await assertFails(batch.commit());
+  });
+
   it('rejects creating a profile for someone else', async () => {
     const db = dbAs(env, 'new-user');
     await assertFails(

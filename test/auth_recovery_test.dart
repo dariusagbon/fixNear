@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/services/auth_service.dart';
+import 'package:fixnear/core/utils/geo.dart';
 
 /// Just enough of a Firebase [User] for AuthService.
 class _FakeUser implements User {
@@ -82,6 +83,54 @@ void main() {
         _FakeUser('u4', email: 'd@example.com', displayName: 'Dana'),
       );
       expect(profile.name, 'Dana');
+    });
+  });
+
+  group('registerWithEmailAndPassword', () {
+    late AuthService signUp;
+    setUp(() {
+      signUp = AuthService(firestore: firestore, firebaseAuth: _SignUpAuth());
+    });
+
+    test('saves a provider base location and radius', () async {
+      await signUp.registerWithEmailAndPassword(
+        email: 'pat@example.com',
+        password: 'secret123',
+        name: 'Pat',
+        role: UserRole.provider,
+        serviceCategory: 'Plumbing',
+        serviceArea: 'Lanang',
+        startingPrice: 500,
+        baseLocation: const LatLngPoint(7.0996, 125.6317),
+        serviceRadiusKm: 80,
+      );
+      final listing = (await firestore.doc('providerProfiles/new-pro').get())
+          .data()!;
+      expect(listing['baseLatitude'], 7.0996);
+      expect(listing['baseLongitude'], 125.6317);
+      expect(
+        listing['baseGeohash'],
+        encodeGeohash(const LatLngPoint(7.0996, 125.6317)),
+      );
+      // Clamped to the allowed range.
+      expect(listing['serviceRadiusKm'], 50);
+    });
+
+    test('leaves location fields out when none was given', () async {
+      await signUp.registerWithEmailAndPassword(
+        email: 'pat@example.com',
+        password: 'secret123',
+        name: 'Pat',
+        role: UserRole.provider,
+        serviceCategory: 'Plumbing',
+        serviceArea: 'Lanang',
+        startingPrice: 500,
+      );
+      final listing = (await firestore.doc('providerProfiles/new-pro').get())
+          .data()!;
+      expect(listing.containsKey('baseLatitude'), isFalse);
+      expect(listing.containsKey('serviceRadiusKm'), isFalse);
+      expect(listing['serviceArea'], 'Lanang');
     });
   });
 
@@ -224,6 +273,28 @@ void main() {
       expect((await firestore.doc('users/p1').get()).exists, isFalse);
     });
   });
+}
+
+/// Creates logins with a fixed uid.
+class _SignUpAuth implements FirebaseAuth {
+  @override
+  Future<UserCredential> createUserWithEmailAndPassword({
+    required String email,
+    required String password,
+  }) async => _Credential(_FakeUser('new-pro', email: email));
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _Credential implements UserCredential {
+  _Credential(this.user);
+
+  @override
+  final User user;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _NoAuth implements FirebaseAuth {

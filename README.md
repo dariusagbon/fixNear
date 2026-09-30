@@ -16,15 +16,16 @@ customer and confirmed by the provider.
   allowed; post a job with a schedule, a map pin or current location (typed area
   and landmark as a fallback) and up to 5 photos; compare and accept quotes;
   reschedule, or cancel (with a reason) until the provider arrives; chat;
-  confirm completion; record cash payment; edit profile and photo
-  (Cloudinary).
+  confirm completion; record cash payment; edit profile, or tap their photo
+  on the **Account** tab to change it straight away (Cloudinary).
 - **Providers**: go online or offline; set a base location and a service radius
-  (2–50 km) on the **Service** tab; see a job board with jobs sent to them
+  (2–50 km) when signing up (optional) or later on the **Service** tab; see a job board with jobs sent to them
   first, then jobs in their trade within their radius nearest first ("2.3 km
   away"), with an "All services" option; quote, decline (a job sent directly
   to them then reopens to others), withdraw before arriving ("Can't make it"),
   move jobs forward, confirm cash, track earnings; edit their name, phone and
-  photo (tap their name at the top), which customers see.
+  photo (tap their name at the top), or change the photo customers see by
+  tapping it on the **Service** tab.
 - **Accounts**: password reset, email verification, and account deletion
   (Edit profile → Delete account), which is refused while a job is active.
 - **Automatic upkeep** (Cloud Functions): losing quotes are closed when one is
@@ -80,15 +81,13 @@ in `test/widget_test.dart` too.
    ```sh
    flutter pub get
    flutter run -d chrome \
-     --dart-define=CLOUDINARY_CLOUD_NAME=your-cloud-name \
-     --dart-define=CLOUDINARY_UPLOAD_PRESET=your-unsigned-preset \
      --dart-define=FCM_VAPID_KEY=your-web-push-key \
      --dart-define=MAPS_ENABLED=true
    ```
 
    | Define | Used for | Without it |
    | --- | --- | --- |
-   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET` | Profile and job photos | Uploads disabled |
+   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET` | Another Cloudinary account for profile and job photos | FixNear's account: `gp7e9yws` / `fixnearAvatar` |
    | `CLOUDINARY_FOLDER` | Default Cloudinary folder (optional) | Profile photos go to `fixnear/avatars`, job photos to `fixnear/service-requests` |
    | `FCM_VAPID_KEY` | Web push | No push on web (Android/iOS still work) |
    | `MAPS_ENABLED=true` | Map pin picker | "Use my current location" and typed area only |
@@ -193,7 +192,10 @@ Profile pictures are uploaded straight from the app to Cloudinary using an
    - **Allowed formats**: `jpg, png, webp, heic`
    - **Max file size**: 5 MB
    - **Incoming transformation**: `c_limit,w_1024,h_1024`
-4. Use the preset name as `CLOUDINARY_UPLOAD_PRESET`.
+4. The app uses cloud `gp7e9yws` and preset `fixnearAvatar` by default. To
+   use another account, pass `CLOUDINARY_CLOUD_NAME` and
+   `CLOUDINARY_UPLOAD_PRESET`. Neither is a secret: the cloud name is in every
+   image URL, and an unsigned preset is meant to be used from apps.
 
 The app stores returned `https://res.cloudinary.com/...` URLs in `photoUrl`
 (user profile and, for providers, their listing) and in a job's `photoUrls`

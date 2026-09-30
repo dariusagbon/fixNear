@@ -52,6 +52,32 @@ Future<List<PickedPhoto>> pickPhotosWithImagePicker() async {
   ];
 }
 
+/// Asks gallery or camera. On web, where there's no camera choice, returns
+/// the gallery straight away. Null when the person closes the sheet.
+Future<ImageSource?> chooseImageSource(BuildContext context) async {
+  if (kIsWeb) return ImageSource.gallery;
+  return showModalBottomSheet<ImageSource>(
+    context: context,
+    builder: (context) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined),
+            title: const Text('Choose from gallery'),
+            onTap: () => Navigator.pop(context, ImageSource.gallery),
+          ),
+          ListTile(
+            leading: const Icon(Icons.photo_camera_outlined),
+            title: const Text('Take a photo'),
+            onTap: () => Navigator.pop(context, ImageSource.camera),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 /// Most photos a customer can attach to one job (also enforced by rules).
 const maxJobPhotos = 5;
 
@@ -271,28 +297,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
       setState(() => _error = 'Photo uploads are not set up for this app yet.');
       return;
     }
-    final source = kIsWeb
-        ? ImageSource.gallery
-        : await showModalBottomSheet<ImageSource>(
-            context: context,
-            builder: (context) => SafeArea(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ListTile(
-                    leading: const Icon(Icons.photo_library_outlined),
-                    title: const Text('Choose from gallery'),
-                    onTap: () => Navigator.pop(context, ImageSource.gallery),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.photo_camera_outlined),
-                    title: const Text('Take a photo'),
-                    onTap: () => Navigator.pop(context, ImageSource.camera),
-                  ),
-                ],
-              ),
-            ),
-          );
+    final source = await chooseImageSource(context);
     if (source == null || !mounted) return;
 
     try {

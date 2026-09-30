@@ -18,6 +18,7 @@ import '../jobs/job_detail_screen.dart';
 import '../location/map_pin_picker.dart';
 import '../notifications/notification_permission.dart';
 import '../profile/edit_profile_screen.dart';
+import '../profile/profile_photo_button.dart';
 
 class CustomerMarketplaceScreen extends StatefulWidget {
   const CustomerMarketplaceScreen({
@@ -378,11 +379,18 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
         children: [
           const SizedBox(height: 12),
           Center(
-            child: ProfileAvatar(
-              name: widget.customerName,
-              photoUrl: profile?.photoUrl,
-              radius: 44,
-            ),
+            child: canEdit
+                ? ProfilePhotoButton(
+                    profile: profile,
+                    uploader: widget.imageUploader!,
+                    onSave: widget.onSaveProfile!,
+                    pickPhoto: widget.pickPhoto,
+                  )
+                : ProfileAvatar(
+                    name: widget.customerName,
+                    photoUrl: profile?.photoUrl,
+                    radius: 44,
+                  ),
           ),
           const SizedBox(height: 12),
           Text(

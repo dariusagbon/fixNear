@@ -5,6 +5,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:image_picker/image_picker.dart';
 
 import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
@@ -924,6 +925,242 @@ void main() {
     });
   });
 
+  group('provider location and quick photo', () {
+    const lanang = LatLngPoint(7.0996, 125.6317);
+
+    void tallWindow(WidgetTester tester) {
+      tester.view.physicalSize = const Size(800, 2000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+    }
+
+    Future<PickedPhoto?> fakePick(ImageSource source) async => PickedPhoto(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      fileName: 'me.jpg',
+    );
+
+    testWidgets('providers can set their base location when signing up', (
+      tester,
+    ) async {
+      tallWindow(tester);
+      final auth = _RecordingAuthService();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: LoginScreen(
+            authService: auth,
+            location: _FakeLocation(here: lanang),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Create an account'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Customer'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Service provider').last);
+      await tester.pumpAndSettle();
+
+      expect(find.text('Where you start from (optional)'), findsOneWidget);
+      expect(find.text('No base location yet'), findsOneWidget);
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Base location: 7.0996'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name'),
+        'Pat Plumbing',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Service area'),
+        'Lanang',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Starting price (PHP)'),
+        '500',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email'),
+        'pat@example.com',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Password'),
+        'secret123',
+      );
+      await tester.tap(find.text('Create account'));
+      await tester.pumpAndSettle();
+
+      expect(auth.registration?['role'], UserRole.provider);
+      expect(auth.registration?['baseLocation'], lanang);
+      expect(auth.registration?['serviceRadiusKm'], 10);
+    });
+
+    testWidgets('signing up without a location still works', (tester) async {
+      tallWindow(tester);
+      final location = _FakeLocation(failure: 'Turn on location services.');
+      final auth = _RecordingAuthService();
+      await tester.pumpWidget(
+        MaterialApp(home: LoginScreen(authService: auth, location: location)),
+      );
+      await tester.tap(find.text('Create an account'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Customer'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Service provider').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+      expect(find.text('Turn on location services.'), findsOneWidget);
+
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Name'),
+        'Pat Plumbing',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Service area'),
+        'Lanang',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Starting price (PHP)'),
+        '500',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Email'),
+        'pat@example.com',
+      );
+      await tester.enterText(
+        find.widgetWithText(TextFormField, 'Password'),
+        'secret123',
+      );
+      await tester.tap(find.text('Create account'));
+      await tester.pumpAndSettle();
+      expect(auth.registration?['role'], UserRole.provider);
+      expect(auth.registration?['baseLocation'], isNull);
+    });
+
+    testWidgets('customers change their photo by tapping it', (tester) async {
+      final uploader = _RecordingUploader();
+      final saved = <Map<String, String?>>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: _FakeMarketplaceRepository(),
+            location: _FakeLocation(),
+            profile: AppUser(
+              id: 'customer-1',
+              email: 'casey@example.com',
+              name: 'Casey Customer',
+              role: UserRole.customer,
+              phone: '09123456789',
+            ),
+            imageUploader: uploader,
+            pickPhoto: fakePick,
+            onSaveProfile: ({required name, phone, photoUrl}) async => saved
+                .add({'name': name, 'phone': phone, 'photoUrl': photoUrl}),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Account').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Add profile photo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose from gallery'));
+      await tester.pumpAndSettle();
+
+      expect(uploader.folders, ['fixnear/avatars']);
+      expect(saved, [
+        {
+          'name': 'Casey Customer',
+          'phone': '09123456789',
+          'photoUrl':
+              'https://res.cloudinary.com/demo/image/upload/v1/photo-1.jpg',
+        },
+      ]);
+      expect(find.text('Profile photo updated.'), findsOneWidget);
+    });
+
+    testWidgets('photo button explains when uploads are off', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: _FakeMarketplaceRepository(),
+            location: _FakeLocation(),
+            profile: AppUser(
+              id: 'customer-1',
+              email: 'casey@example.com',
+              name: 'Casey Customer',
+              role: UserRole.customer,
+            ),
+            imageUploader: _RecordingUploader(configured: false),
+            pickPhoto: fakePick,
+            onSaveProfile: ({required name, phone, photoUrl}) async {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Account').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.bySemanticsLabel('Add profile photo'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Photo uploads are not set up for this app yet.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('providers change their photo on the Service tab', (
+      tester,
+    ) async {
+      tallWindow(tester);
+      final uploader = _RecordingUploader();
+      String? savedPhoto;
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = ProviderProfile(
+          id: 'provider-1',
+          name: 'Pat Plumbing',
+          category: 'Plumbing',
+          serviceArea: 'Lanang',
+          startingPrice: 500,
+          isAvailable: true,
+        );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Pat Plumbing',
+            repository: repository,
+            location: _FakeLocation(),
+            profile: AppUser(
+              id: 'provider-1',
+              email: 'pat@example.com',
+              name: 'Pat Plumbing',
+              role: UserRole.provider,
+            ),
+            imageUploader: uploader,
+            pickPhoto: fakePick,
+            onSaveProfile: ({required name, phone, photoUrl}) async =>
+                savedPhoto = photoUrl,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Service'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Customers see this photo. Tap it to change.'),
+        findsOneWidget,
+      );
+      await tester.tap(find.bySemanticsLabel('Add profile photo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Choose from gallery'));
+      await tester.pumpAndSettle();
+      expect(uploader.folders, ['fixnear/avatars']);
+      expect(savedPhoto, startsWith('https://res.cloudinary.com/'));
+      expect(find.text('Profile photo updated.'), findsOneWidget);
+    });
+  });
+
   group('booking changes', () {
     ServiceRequest booked(String status) => ServiceRequest(
       id: 'job-b',
@@ -1743,9 +1980,43 @@ class _RecordingAuthService extends AuthService {
     : super(firebaseAuth: _UnusedAuth(), firestore: _UnusedFirestore());
 
   final List<String> resetEmails = [];
+  Map<String, Object?>? registration;
 
   @override
   Future<void> sendPasswordReset(String email) async => resetEmails.add(email);
+
+  @override
+  Future<UserCredential> registerWithEmailAndPassword({
+    required String email,
+    required String password,
+    required String name,
+    required UserRole role,
+    String? serviceCategory,
+    String? serviceArea,
+    int? startingPrice,
+    LatLngPoint? baseLocation,
+    double serviceRadiusKm = defaultServiceRadiusKm,
+  }) async {
+    registration = {
+      'email': email,
+      'name': name,
+      'role': role,
+      'serviceCategory': serviceCategory,
+      'serviceArea': serviceArea,
+      'startingPrice': startingPrice,
+      'baseLocation': baseLocation,
+      'serviceRadiusKm': serviceRadiusKm,
+    };
+    return _UnusedCredential();
+  }
+
+  @override
+  Future<void> sendEmailVerification() async {}
+}
+
+class _UnusedCredential implements UserCredential {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _UnusedAuth implements FirebaseAuth {

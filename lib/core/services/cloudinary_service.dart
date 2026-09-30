@@ -18,7 +18,8 @@ abstract interface class ImageUploader {
 
 /// Cloudinary account settings for unsigned uploads.
 ///
-/// Set them at build time so no secrets live in source control:
+/// Defaults to FixNear's account (see [defaultCloudName]). To use another
+/// account, set them at build time:
 ///
 /// ```sh
 /// flutter run \
@@ -36,11 +37,23 @@ class CloudinaryConfig {
     this.folder,
   });
 
+  /// FixNear's Cloudinary account. Neither value is a secret: the cloud name
+  /// is part of every image URL and the preset is unsigned. Override both
+  /// with `--dart-define` to use another account.
+  static const defaultCloudName = 'gp7e9yws';
+  static const defaultUploadPreset = 'fixnearAvatar';
+
   static CloudinaryConfig fromEnvironment() {
     const folder = String.fromEnvironment('CLOUDINARY_FOLDER');
     return const CloudinaryConfig(
-      cloudName: String.fromEnvironment('CLOUDINARY_CLOUD_NAME'),
-      uploadPreset: String.fromEnvironment('CLOUDINARY_UPLOAD_PRESET'),
+      cloudName: String.fromEnvironment(
+        'CLOUDINARY_CLOUD_NAME',
+        defaultValue: defaultCloudName,
+      ),
+      uploadPreset: String.fromEnvironment(
+        'CLOUDINARY_UPLOAD_PRESET',
+        defaultValue: defaultUploadPreset,
+      ),
       folder: folder == '' ? null : folder,
     );
   }

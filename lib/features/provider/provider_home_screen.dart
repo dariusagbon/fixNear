@@ -12,6 +12,7 @@ import '../../core/utils/job_matching.dart';
 import '../../core/widgets/profile_avatar.dart';
 import '../notifications/notification_permission.dart';
 import '../profile/edit_profile_screen.dart';
+import '../profile/profile_photo_button.dart';
 import 'provider_service_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
@@ -109,6 +110,15 @@ class ProviderHomeScreen extends StatelessWidget {
               providerUid: providerUid,
               repository: repository,
               location: location,
+              header: _canEditProfile
+                  ? _ProfileCard(
+                      profile: profile!,
+                      uploader: imageUploader!,
+                      onSave: onSaveProfile!,
+                      pickPhoto: pickPhoto,
+                      onEdit: () => _openEditProfile(context),
+                    )
+                  : null,
             ),
           ],
         ),
@@ -185,6 +195,70 @@ class _ProfileTitle extends StatelessWidget {
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: AppTheme.minTapTarget),
           child: content,
+        ),
+      ),
+    );
+  }
+}
+
+/// Top of the Service tab: the photo customers see (tap to change) and a
+/// link to Edit profile.
+class _ProfileCard extends StatelessWidget {
+  const _ProfileCard({
+    required this.profile,
+    required this.uploader,
+    required this.onSave,
+    required this.pickPhoto,
+    required this.onEdit,
+  });
+
+  final AppUser profile;
+  final ImageUploader uploader;
+  final ProfileSaver onSave;
+  final PhotoPicker pickPhoto;
+  final VoidCallback onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Card(
+      // Keep the photo and Edit profile as separate buttons for screen
+      // readers.
+      semanticContainer: false,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            ProfilePhotoButton(
+              profile: profile,
+              uploader: uploader,
+              onSave: onSave,
+              pickPhoto: pickPhoto,
+              radius: 32,
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    profile.name,
+                    style: textTheme.titleMedium,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Customers see this photo. Tap it to change.',
+                    style: textTheme.bodySmall,
+                  ),
+                  TextButton(
+                    onPressed: onEdit,
+                    child: const Text('Edit profile'),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
