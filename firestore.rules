@@ -2,6 +2,44 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Latitude and longitude are optional, but must be set together and be
+    // real coordinates when present. Older jobs have neither field.
+    function validCoordinates(data) {
+      let lat = data.get('latitude', null);
+      let lng = data.get('longitude', null);
+      return (lat == null && lng == null)
+        || (lat is number && lng is number
+          && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180);
+    }
+
+    // A provider's base location (optional, both halves or neither) and
+    // service radius (2–50 km). Providers from before distance matching
+    // have none of these fields.
+    function validProviderLocation(data) {
+      let lat = data.get('baseLatitude', null);
+      let lng = data.get('baseLongitude', null);
+      let radius = data.get('serviceRadiusKm', null);
+      let hash = data.get('baseGeohash', null);
+      return ((lat == null && lng == null)
+          || (lat is number && lng is number
+            && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180))
+        && (radius == null || (radius is number && radius >= 2 && radius <= 50))
+        && (hash == null || (hash is string && hash.size() <= 12));
+    }
+
+    // Optional short reason for cancelling or withdrawing.
+    function validReason(reason) {
+      return reason == null || (reason is string && reason.size() <= 200);
+    }
+
+    // Profile photos are Cloudinary links (or absent).
+    function validPhotoUrl(data) {
+      let url = data.get('photoUrl', null);
+      return url == null
+        || (url is string && url.size() <= 500
+          && url.matches('^https://res[.]cloudinary[.]com/.+'));
+    }
+
     function signedInProvider() {
       return request.auth != null
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'provider';
@@ -28,9 +66,31 @@ service cloud.firestore {
         && request.resource.data.createdAt == resource.data.createdAt
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'phone', 'photoUrl'
-        ]);
+        ])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.name.size() <= 80
+        && (request.resource.data.get('phone', null) == null
+          || (request.resource.data.phone is string
+            && request.resource.data.phone.size() <= 20))
+        && validPhotoUrl(request.resource.data);
 
-      allow delete: if false;
+      // Account deletion (the app then deletes the login).
+      allow delete: if request.auth != null && request.auth.uid == userId;
+
+      // Push tokens for this user's devices. Only Cloud Functions (admin)
+      // read them to send notifications; the app writes and removes its own.
+      match /tokens/{token} {
+        allow create, update: if request.auth != null
+          && request.auth.uid == userId
+          && request.resource.data.keys().hasOnly(['token', 'platform', 'updatedAt'])
+          && request.resource.data.token == token
+          && token.size() <= 4096
+          && request.resource.data.platform in ['android', 'ios', 'web', 'other']
+          && request.resource.data.updatedAt == request.time;
+        allow delete: if request.auth != null && request.auth.uid == userId;
+        allow read: if false;
+      }
     }
 
     match /providerProfiles/{providerId} {
@@ -38,8 +98,10 @@ service cloud.firestore {
         && request.auth.uid == providerId
         && getAfter(/databases/$(database)/documents/users/$(providerId)).data.role == 'provider'
         && request.resource.data.keys().hasOnly([
-          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable', 'createdAt'
+          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable', 'createdAt',
+          'baseLatitude', 'baseLongitude', 'baseGeohash', 'serviceRadiusKm'
         ])
+        && validProviderLocation(request.resource.data)
         && request.resource.data.name is string
         && request.resource.data.category is string
         && request.resource.data.serviceArea is string
@@ -55,10 +117,14 @@ service cloud.firestore {
         && request.auth.uid == providerId
         && signedInProvider()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable'
-        ]);
+          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable',
+          'baseLatitude', 'baseLongitude', 'baseGeohash', 'serviceRadiusKm',
+          'photoUrl'
+        ])
+        && validProviderLocation(request.resource.data)
+        && validPhotoUrl(request.resource.data);
 
-      allow delete: if false;
+      allow delete: if request.auth != null && request.auth.uid == providerId;
     }
 
     match /serviceRequests/{requestId} {
@@ -67,9 +133,16 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'customer'
         && request.resource.data.keys().hasOnly([
           'customerUid', 'customerName', 'category', 'description', 'serviceArea',
+          'locationLabel', 'latitude', 'longitude', 'geohash',
           'providerUid', 'providerName', 'status', 'scheduledAt', 'photoUrls',
           'declinedProviderUids', 'paymentStatus', 'createdAt', 'updatedAt'
         ])
+        && (request.resource.data.get('locationLabel', null) == null
+          || request.resource.data.locationLabel is string)
+        && validCoordinates(request.resource.data)
+        && (request.resource.data.get('geohash', null) == null
+          || (request.resource.data.geohash is string
+            && request.resource.data.geohash.size() <= 12))
         && request.resource.data.customerName is string
         && request.resource.data.category is string
         && request.resource.data.description is string
@@ -81,6 +154,7 @@ service cloud.firestore {
         && request.resource.data.status == 'requested'
         && request.resource.data.scheduledAt is timestamp
         && request.resource.data.photoUrls is list
+        && request.resource.data.photoUrls.size() <= 5
         && request.resource.data.declinedProviderUids == []
         && request.resource.data.paymentStatus == 'unpaid'
         && request.resource.data.createdAt is timestamp
@@ -95,10 +169,55 @@ service cloud.firestore {
                   || resource.data.providerUid == request.auth.uid)))));
 
       allow update: if request.auth != null
+        // Customer cancels, before the provider has arrived.
         && ((resource.data.customerUid == request.auth.uid
-            && resource.data.status in ['requested', 'quoted']
+            && resource.data.status in ['requested', 'quoted', 'accepted', 'on_the_way']
             && request.resource.data.status == 'cancelled'
-            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt'])
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'updatedAt', 'cancelledBy', 'cancelReason'
+            ])
+            && request.resource.data.get('cancelledBy', 'customer') == 'customer'
+            && validReason(request.resource.data.get('cancelReason', null))
+            && request.resource.data.updatedAt is timestamp)
+          // Customer reschedules an open or booked job to a future time.
+          || (resource.data.customerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted', 'accepted']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'scheduledAt', 'updatedAt'
+            ])
+            && request.resource.data.scheduledAt is timestamp
+            && request.resource.data.scheduledAt > request.time
+            && request.resource.data.updatedAt is timestamp)
+          // The provider a job was sent to declines it: it reopens to
+          // everyone nearby.
+          || (signedInProvider()
+            && resource.data.providerUid == request.auth.uid
+            && resource.data.status in ['requested', 'quoted']
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'providerUid', 'providerName', 'declinedProviderUids', 'updatedAt'
+            ])
+            && request.resource.data.providerUid == null
+            && request.resource.data.providerName == null
+            && request.resource.data.declinedProviderUids.toSet()
+              == resource.data.declinedProviderUids.toSet().union([request.auth.uid].toSet())
+            && request.resource.data.updatedAt is timestamp)
+          // The booked provider withdraws before arriving: the job reopens
+          // for new quotes, without them.
+          || (signedInProvider()
+            && resource.data.providerUid == request.auth.uid
+            && resource.data.status in ['accepted', 'on_the_way']
+            && request.resource.data.status == 'requested'
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'providerUid', 'providerName', 'quotedPrice', 'quoteNote',
+              'declinedProviderUids', 'withdrawReason', 'updatedAt'
+            ])
+            && request.resource.data.providerUid == null
+            && request.resource.data.providerName == null
+            && request.resource.data.get('quotedPrice', null) == null
+            && request.resource.data.get('quoteNote', null) == null
+            && request.resource.data.declinedProviderUids.toSet()
+              == resource.data.declinedProviderUids.toSet().union([request.auth.uid].toSet())
+            && validReason(request.resource.data.get('withdrawReason', null))
             && request.resource.data.updatedAt is timestamp)
           || (resource.data.customerUid == request.auth.uid
             && resource.data.status in ['requested', 'quoted']
@@ -110,6 +229,7 @@ service cloud.firestore {
             && request.resource.data.quotedPrice is int
             && request.resource.data.quoteNote is string
             && getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/quotes/$(request.resource.data.providerUid)).data.status == 'accepted'
+            && request.resource.data.quotedPrice == getAfter(/databases/$(database)/documents/serviceRequests/$(requestId)/quotes/$(request.resource.data.providerUid)).data.price
             && request.resource.data.updatedAt is timestamp)
           || (signedInProvider()
             && resource.data.status in ['requested', 'quoted']
@@ -125,9 +245,9 @@ service cloud.firestore {
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
               'declinedProviderUids', 'updatedAt'
             ])
-            && request.resource.data.declinedProviderUids.hasAll(resource.data.declinedProviderUids)
-            && request.resource.data.declinedProviderUids.hasAny([request.auth.uid])
-            && request.resource.data.declinedProviderUids.size() <= resource.data.declinedProviderUids.size() + 1
+            // A provider can only add themselves to the declined list.
+            && request.resource.data.declinedProviderUids.toSet()
+              == resource.data.declinedProviderUids.toSet().union([request.auth.uid].toSet())
             && request.resource.data.updatedAt is timestamp)
           || (signedInProvider()
             && request.auth.uid == resource.data.providerUid
@@ -184,11 +304,29 @@ service cloud.firestore {
           && request.resource.data.status == 'sent'
           && request.resource.data.createdAt is timestamp;
 
-        allow update: if request.auth != null
+        // The customer accepts a quote, or the provider revises their own
+        // quote while the job is still open.
+        allow update: if (request.auth != null
           && get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.customerUid == request.auth.uid
           && resource.data.status == 'sent'
           && request.resource.data.status == 'accepted'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']))
+          || (signedInProvider()
+            && request.auth.uid == providerId
+            && resource.data.status == 'sent'
+            && get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.status in ['requested', 'quoted']
+            && (get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.providerUid == null
+              || get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.providerUid == providerId)
+            && !get(/databases/$(database)/documents/serviceRequests/$(requestId)).data.declinedProviderUids.hasAny([providerId])
+            && request.resource.data.keys().hasOnly([
+              'providerUid', 'providerName', 'price', 'note', 'status', 'createdAt'
+            ])
+            && request.resource.data.providerUid == providerId
+            && request.resource.data.price is int
+            && request.resource.data.price > 0
+            && request.resource.data.note is string
+            && request.resource.data.status == 'sent'
+            && request.resource.data.createdAt is timestamp);
 
         allow delete: if false;
       }

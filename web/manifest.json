@@ -1,12 +1,12 @@
 {
-    "name": "fixnear",
-    "short_name": "fixnear",
+    "name": "FixNear",
+    "short_name": "FixNear",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
-    "orientation": "portrait-primary",
+    "background_color": "#F5F7FB",
+    "theme_color": "#1E7AF9",
+    "description": "Find trusted local service providers, compare quotes, and book with confidence.",
+    "orientation": "any",
     "prefer_related_applications": false,
     "icons": [
         {

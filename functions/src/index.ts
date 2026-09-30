@@ -1,0 +1,96 @@
+// FixNear push notifications. All functions run in asia-southeast1
+// (Singapore), the closest region to Davao.
+//
+// Firestore triggers must run in the same region as the Firestore database.
+// If the database is not in asia-southeast1, change REGION to match it.
+
+import { initializeApp } from 'firebase-admin/app';
+import { getFirestore } from 'firebase-admin/firestore';
+import { getMessaging } from 'firebase-admin/messaging';
+import { setGlobalOptions } from 'firebase-functions/v2';
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+  onDocumentWritten,
+} from 'firebase-functions/v2/firestore';
+import { defineString } from 'firebase-functions/params';
+import * as functionsV1 from 'firebase-functions/v1';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import type { DeliveryContext } from './deliver';
+import {
+  handleJobCreated,
+  handleDailySweep,
+  handleJobUpdated,
+  handleMessageCreated,
+  handleQuoteWritten,
+  handleUserDeleted,
+} from './handlers';
+
+export const REGION = 'asia-southeast1';
+
+setGlobalOptions({ region: REGION, maxInstances: 10 });
+initializeApp();
+
+const appUrl = defineString('APP_URL', {
+  default: 'https://fixnear-d5c1c.web.app',
+  description: 'Public URL of the FixNear web app, used in web notification links.',
+});
+
+function context(): DeliveryContext {
+  return { db: getFirestore(), messaging: getMessaging(), appUrl: appUrl.value() };
+}
+
+/** New job: the chosen provider, or online providers nearby. */
+export const notifyJobPosted = onDocumentCreated('serviceRequests/{requestId}', async (event) => {
+  const job = event.data?.data();
+  if (job) await handleJobCreated(context(), event.params.requestId, job);
+});
+
+/** Status steps → customer. Cash payment recorded/confirmed → other side. */
+export const notifyJobUpdated = onDocumentUpdated('serviceRequests/{requestId}', async (event) => {
+  const before = event.data?.before.data();
+  const after = event.data?.after.data();
+  if (before && after) await handleJobUpdated(context(), event.params.requestId, before, after);
+});
+
+/** New or revised quote → customer. Quote accepted → provider. */
+export const notifyQuoteWritten = onDocumentWritten(
+  'serviceRequests/{requestId}/quotes/{providerId}',
+  async (event) => {
+    await handleQuoteWritten(
+      context(),
+      event.params.requestId,
+      event.data?.before.data(),
+      event.data?.after.data(),
+    );
+  },
+);
+
+/** New chat message → the other participant. */
+export const notifyMessageSent = onDocumentCreated(
+  'serviceRequests/{requestId}/messages/{messageId}',
+  async (event) => {
+    const message = event.data?.data();
+    if (message) await handleMessageCreated(context(), event.params.requestId, message);
+  },
+);
+
+/** A login was deleted: clean up tokens, listing, open quotes, names. */
+export const cleanUpDeletedUser = functionsV1
+  .region(REGION)
+  .auth.user()
+  .onDelete(async (user) => {
+    await handleUserDeleted(context(), user.uid);
+  });
+
+/**
+ * Every day at 9:00 in the Philippines: close open jobs more than a day
+ * past their date, remind customers to confirm finished work and
+ * providers to confirm cash. Uses Cloud Scheduler (Blaze plan).
+ */
+export const dailyJobSweep = onSchedule(
+  { schedule: '0 9 * * *', timeZone: 'Asia/Manila' },
+  async () => {
+    await handleDailySweep(context());
+  },
+);

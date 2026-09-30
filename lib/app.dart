@@ -37,7 +37,9 @@ class _AppInitializationGateState extends State<AppInitializationGate> {
 
   Future<void> _init() async {
     try {
-      await FirebaseInitializer.ensureInitialized();
+      await FirebaseInitializer.ensureInitialized().timeout(
+        const Duration(seconds: 20),
+      );
       if (!mounted) return;
       setState(() {
         _initializationError = null;
@@ -59,10 +61,13 @@ class _AppInitializationGateState extends State<AppInitializationGate> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Firebase could not be initialized.'),
+                Text(
+                  'FixNear could not start',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
                 const SizedBox(height: 8),
                 Text(
-                  'Check the Firebase configuration for this platform.',
+                  'Check your internet connection and try again.',
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),

@@ -3,10 +3,31 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/marketplace_models.dart';
+import '../utils/geo.dart';
 
 abstract interface class MarketplaceRepository {
   Stream<List<ProviderProfile>> watchProviders();
+
+  /// A provider's own listing, whether or not they are online.
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid);
+
+  /// Takes a provider online (shown to customers) or offline.
+  Future<void> setProviderAvailability(String providerUid, bool isAvailable);
+
+  /// Saves what a provider offers and where: jobs are matched within
+  /// [serviceRadiusKm] of [baseLocation].
+  Future<void> updateProviderServiceSettings({
+    required String providerUid,
+    required String category,
+    required String serviceArea,
+    required int startingPrice,
+    required LatLngPoint? baseLocation,
+    required double serviceRadiusKm,
+  });
   Stream<List<ServiceRequest>> watchCustomerRequests(String customerUid);
+
+  /// A single job, or null if it doesn't exist or can't be read.
+  Stream<ServiceRequest?> watchRequest(String requestId);
   Stream<List<ServiceRequest>> watchOpenRequests(String providerUid);
   Stream<List<ServiceRequest>> watchProviderJobs(String providerUid);
   Stream<List<ProviderQuote>> watchQuotes(String requestId);
@@ -24,8 +45,24 @@ abstract interface class MarketplaceRepository {
     DateTime? scheduledAt,
     List<String> photoUrls = const [],
   });
-  Future<void> cancelRequest(String requestId);
+
+  /// The customer cancels a job, up until the provider arrives.
+  Future<void> cancelRequest(String requestId, {String? reason});
+
+  /// A provider passes on an open job. If it was sent to them directly, it
+  /// reopens to every nearby provider.
   Future<void> declineRequest(String requestId, String providerUid);
+
+  /// The booked provider withdraws before arriving; the job reopens for
+  /// new quotes without them.
+  Future<void> withdrawFromJob(
+    String requestId,
+    String providerUid, {
+    String? reason,
+  });
+
+  /// The customer moves an open or booked job to a new time.
+  Future<void> rescheduleRequest(String requestId, DateTime scheduledAt);
   Future<void> sendQuote({
     required String requestId,
     required String providerUid,
@@ -74,6 +111,58 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
         .where('customerUid', isEqualTo: customerUid)
         .snapshots()
         .map(_mapRequests);
+  }
+
+  @override
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid) {
+    return _firestore
+        .collection('providerProfiles')
+        .doc(providerUid)
+        .snapshots()
+        .map((snapshot) {
+          final data = snapshot.data();
+          return data == null
+              ? null
+              : ProviderProfile.fromMap(data, snapshot.id);
+        });
+  }
+
+  @override
+  Future<void> setProviderAvailability(
+    String providerUid,
+    bool isAvailable,
+  ) async {
+    await _firestore.collection('providerProfiles').doc(providerUid).update({
+      'isAvailable': isAvailable,
+    });
+  }
+
+  @override
+  Future<void> updateProviderServiceSettings({
+    required String providerUid,
+    required String category,
+    required String serviceArea,
+    required int startingPrice,
+    required LatLngPoint? baseLocation,
+    required double serviceRadiusKm,
+  }) async {
+    await _firestore.collection('providerProfiles').doc(providerUid).update({
+      'category': category,
+      'serviceArea': serviceArea.trim(),
+      'startingPrice': startingPrice,
+      'baseLatitude': baseLocation?.latitude,
+      'baseLongitude': baseLocation?.longitude,
+      'baseGeohash': baseLocation == null ? null : encodeGeohash(baseLocation),
+      'serviceRadiusKm': clampServiceRadiusKm(serviceRadiusKm),
+    });
+  }
+
+  @override
+  Stream<ServiceRequest?> watchRequest(String requestId) {
+    return _requests.doc(requestId).snapshots().map((snapshot) {
+      final data = snapshot.data();
+      return data == null ? null : ServiceRequest.fromMap(data, snapshot.id);
+    });
   }
 
   @override
@@ -173,6 +262,7 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
     List<String> photoUrls = const [],
   }) async {
     final request = _requests.doc();
+    final location = LatLngPoint.tryFrom(latitude, longitude);
     await request.set({
       'customerUid': customerUid,
       'customerName': customerName,
@@ -180,8 +270,9 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
       'description': description.trim(),
       'serviceArea': serviceArea.trim(),
       'locationLabel': (locationLabel ?? serviceArea).trim(),
-      'latitude': latitude,
-      'longitude': longitude,
+      'latitude': location?.latitude,
+      'longitude': location?.longitude,
+      'geohash': location == null ? null : encodeGeohash(location),
       'providerUid': provider?.id,
       'providerName': provider?.name,
       'status': RequestStatus.requested,
@@ -197,18 +288,110 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
   }
 
   @override
-  Future<void> cancelRequest(String requestId) async {
-    await _requests.doc(requestId).update({
-      'status': 'cancelled',
-      'updatedAt': FieldValue.serverTimestamp(),
+  Future<void> cancelRequest(String requestId, {String? reason}) async {
+    await _firestore.runTransaction((transaction) async {
+      final ref = _requests.doc(requestId);
+      final snapshot = await transaction.get(ref);
+      if (!snapshot.exists ||
+          !_cancellable.contains(snapshot.data()?['status'])) {
+        throw StateError(
+          'This job can no longer be cancelled. Message your provider instead.',
+        );
+      }
+      final trimmed = reason?.trim() ?? '';
+      transaction.update(ref, {
+        'status': RequestStatus.cancelled,
+        'cancelledBy': 'customer',
+        if (trimmed.isNotEmpty)
+          'cancelReason': trimmed.substring(0, trimmed.length.clamp(0, 200)),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  static const _cancellable = [
+    RequestStatus.requested,
+    RequestStatus.quoted,
+    RequestStatus.accepted,
+    RequestStatus.onTheWay,
+  ];
+
+  @override
+  Future<void> declineRequest(String requestId, String providerUid) async {
+    await _firestore.runTransaction((transaction) async {
+      final ref = _requests.doc(requestId);
+      final data = (await transaction.get(ref)).data();
+      final open = [
+        RequestStatus.requested,
+        RequestStatus.quoted,
+      ].contains(data?['status']);
+      if (data == null || !open) {
+        throw StateError('This job is no longer open.');
+      }
+      transaction.update(ref, {
+        'declinedProviderUids': FieldValue.arrayUnion([providerUid]),
+        // A job sent directly to this provider reopens to everyone.
+        if (data['providerUid'] == providerUid) ...{
+          'providerUid': null,
+          'providerName': null,
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 
   @override
-  Future<void> declineRequest(String requestId, String providerUid) async {
-    await _requests.doc(requestId).update({
-      'declinedProviderUids': FieldValue.arrayUnion([providerUid]),
-      'updatedAt': FieldValue.serverTimestamp(),
+  Future<void> withdrawFromJob(
+    String requestId,
+    String providerUid, {
+    String? reason,
+  }) async {
+    await _firestore.runTransaction((transaction) async {
+      final ref = _requests.doc(requestId);
+      final data = (await transaction.get(ref)).data();
+      if (data == null ||
+          data['providerUid'] != providerUid ||
+          ![
+            RequestStatus.accepted,
+            RequestStatus.onTheWay,
+          ].contains(data['status'])) {
+        throw StateError('You can only withdraw before you arrive.');
+      }
+      final trimmed = reason?.trim() ?? '';
+      transaction.update(ref, {
+        'status': RequestStatus.requested,
+        'providerUid': null,
+        'providerName': null,
+        'quotedPrice': null,
+        'quoteNote': null,
+        'declinedProviderUids': FieldValue.arrayUnion([providerUid]),
+        if (trimmed.isNotEmpty)
+          'withdrawReason': trimmed.substring(0, trimmed.length.clamp(0, 200)),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    });
+  }
+
+  @override
+  Future<void> rescheduleRequest(String requestId, DateTime scheduledAt) async {
+    if (!scheduledAt.isAfter(DateTime.now())) {
+      throw ArgumentError('Choose a time later than now.');
+    }
+    await _firestore.runTransaction((transaction) async {
+      final ref = _requests.doc(requestId);
+      final data = (await transaction.get(ref)).data();
+      if (data == null ||
+          ![
+            RequestStatus.requested,
+            RequestStatus.quoted,
+            RequestStatus.accepted,
+          ].contains(data['status'])) {
+        throw StateError('This job can no longer be rescheduled.');
+      }
+      transaction.update(ref, {
+        'scheduledAt': Timestamp.fromDate(scheduledAt),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     });
   }
 

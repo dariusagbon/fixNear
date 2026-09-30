@@ -4,8 +4,16 @@ import 'package:flutter/material.dart';
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/cloudinary_service.dart';
+import '../../core/services/location_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/utils/geo.dart';
 import '../customer/customer_marketplace_screen.dart';
+import '../location/base_location_field.dart';
+import '../notifications/notification_host.dart';
+import '../profile/edit_profile_screen.dart';
 import '../provider/provider_home_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -18,6 +26,16 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   final AuthService _authService = AuthService();
   final MarketplaceRepository _marketplace = FirestoreMarketplaceRepository();
+  final ImageUploader _imageUploader = CloudinaryService();
+  late final PushNotifications _push = FirebasePushNotifications();
+
+  /// Removes this device's push token while still signed in (the rules need
+  /// the user), then signs out.
+  Future<void> _signOut(String uid) async {
+    await _push.unregisterDevice(uid);
+    await _authService.signOut();
+  }
+
   late final Stream<User?> _authStateChanges = _authService.authStateChanges();
 
   @override
@@ -60,28 +78,72 @@ class _AuthGateState extends State<AuthGate> {
 
             final profile = profileSnapshot.data;
             if (profile == null) {
-              return _AuthStatusScreen(
-                title: 'Account profile missing',
-                message: 'Your account has no FixNear profile. Please contact support.',
-                actionLabel: 'Sign out',
-                onAction: _authService.signOut,
+              // Sign-up failed after the login was created. Rebuild the
+              // profile; the stream above then shows the normal home.
+              return _ProfileRecovery(
+                user: user,
+                authService: _authService,
+                onSignOut: _authService.signOut,
               );
             }
 
-            return switch (profile.role) {
+            Future<void> saveProfile({
+              required String name,
+              String? phone,
+              String? photoUrl,
+            }) => _authService.updateProfile(
+              uid: profile.id,
+              name: name,
+              phone: phone,
+              photoUrl: photoUrl,
+              isProvider: profile.role == UserRole.provider,
+            );
+
+            final account = AccountControls(
+              emailVerified: _authService.isEmailVerified,
+              sendVerificationEmail: _authService.sendEmailVerification,
+              deleteAccount: (password) => _authService.deleteAccount(
+                profile: profile,
+                password: password,
+                // Still signed in here, so the rules allow removing it.
+                beforeDelete: () => _push.unregisterDevice(profile.id),
+              ),
+            );
+
+            final home = switch (profile.role) {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
                 customerName: profile.name,
                 repository: _marketplace,
-                onSignOut: _authService.signOut,
+                onSignOut: () => _signOut(profile.id),
+                profile: profile,
+                imageUploader: _imageUploader,
+                push: _push,
+                onSaveProfile: saveProfile,
+                account: account,
               ),
               UserRole.provider => ProviderHomeScreen(
                 providerUid: profile.id,
                 providerName: profile.name,
                 repository: _marketplace,
-                onSignOut: _authService.signOut,
+                onSignOut: () => _signOut(profile.id),
+                push: _push,
+                profile: profile,
+                imageUploader: _imageUploader,
+                onSaveProfile: saveProfile,
+                account: account,
               ),
             };
+            return NotificationHost(
+              // A new user gets a fresh host (and token registration).
+              key: ValueKey(profile.id),
+              push: _push,
+              repository: _marketplace,
+              uid: profile.id,
+              name: profile.name,
+              role: profile.role,
+              child: home,
+            );
           },
         );
       },
@@ -90,9 +152,16 @@ class _AuthGateState extends State<AuthGate> {
 }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, this.authService});
+  const LoginScreen({
+    super.key,
+    this.authService,
+    this.location = const GeolocatorLocationService(),
+  });
 
   final AuthService? authService;
+
+  /// Device location, for a provider's optional base location at sign-up.
+  final LocationService location;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -110,6 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
   UserRole _role = UserRole.customer;
   String _serviceCategory = serviceCategories.first;
+  LatLngPoint? _baseLocation;
+  double _serviceRadiusKm = defaultServiceRadiusKm;
   String? _errorMessage;
 
   @override
@@ -144,7 +215,14 @@ class _LoginScreenState extends State<LoginScreen> {
           startingPrice: _role == UserRole.provider
               ? int.tryParse(_startingPriceController.text.trim())
               : null,
+          baseLocation: _role == UserRole.provider ? _baseLocation : null,
+          serviceRadiusKm: _serviceRadiusKm,
         );
+        // Best effort: the account works either way; the profile screen
+        // offers to resend.
+        try {
+          await auth.sendEmailVerification();
+        } catch (_) {}
       } else {
         await auth.signInWithEmailAndPassword(
           email: _emailController.text.trim(),
@@ -184,7 +262,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const Icon(
                       Icons.handyman_rounded,
                       size: 40,
-                      color: Color(0xFF1E7AF9),
+                      color: AppTheme.ink,
                     ),
                     const SizedBox(height: 12),
                     const Text(
@@ -203,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 15,
-                        color: Color(0xFF5F6F85),
+                        color: AppTheme.inkMuted,
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -220,6 +298,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 14),
                       DropdownButtonFormField<UserRole>(
                         initialValue: _role,
+                        isExpanded: true,
+                        elevation: 0,
+                        dropdownColor: AppTheme.tint,
+                        borderRadius: BorderRadius.circular(12),
                         decoration: const InputDecoration(
                           labelText: 'Account type',
                         ),
@@ -241,6 +323,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       if (_role == UserRole.provider) ...[
                         DropdownButtonFormField<String>(
                           initialValue: _serviceCategory,
+                          isExpanded: true,
+                          elevation: 0,
+                          dropdownColor: AppTheme.tint,
+                          borderRadius: BorderRadius.circular(12),
                           decoration: const InputDecoration(
                             labelText: 'Main service',
                           ),
@@ -285,6 +371,29 @@ class _LoginScreenState extends State<LoginScreen> {
                                 : null;
                           },
                         ),
+                        const SizedBox(height: 18),
+                        Text(
+                          'Where you start from (optional)',
+                          style: Theme.of(context).textTheme.titleSmall,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Nearby jobs show first and you get notified about '
+                          'jobs within your radius. You can change this later '
+                          'on the Service tab.',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                        const SizedBox(height: 8),
+                        BaseLocationField(
+                          base: _baseLocation,
+                          radiusKm: _serviceRadiusKm,
+                          location: widget.location,
+                          enabled: !_isSubmitting,
+                          onBaseChanged: (point) =>
+                              setState(() => _baseLocation = point),
+                          onRadiusChanged: (km) =>
+                              setState(() => _serviceRadiusKm = km),
+                        ),
                         const SizedBox(height: 14),
                       ],
                     ],
@@ -327,6 +436,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           ? null
                           : 'Password must be at least 6 characters',
                     ),
+                    if (!_isRegistering)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _isSubmitting ? null : _forgotPassword,
+                          child: const Text('Forgot password?'),
+                        ),
+                      ),
                     if (_errorMessage != null) ...[
                       const SizedBox(height: 14),
                       Text(
@@ -371,6 +488,38 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _forgotPassword() async {
+    final email = await showDialog<String>(
+      context: context,
+      builder: (context) =>
+          _ForgotPasswordDialog(initialEmail: _emailController.text.trim()),
+    );
+    if (email == null || !mounted) return;
+    final auth = widget.authService ?? AuthService();
+    try {
+      await auth.sendPasswordReset(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'If an account exists for $email, a reset link is on its way.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_authErrorMessage(error.code))));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not send the reset link. Try again.'),
+        ),
+      );
+    }
+  }
+
   String _authErrorMessage(String code) {
     return switch (code) {
       'invalid-email' => 'Enter a valid email address.',
@@ -391,18 +540,128 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+class _ForgotPasswordDialog extends StatefulWidget {
+  const _ForgotPasswordDialog({required this.initialEmail});
+
+  final String initialEmail;
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final _controller = TextEditingController(text: widget.initialEmail);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reset your password'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('We will email you a link to choose a new password.'),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
+              decoration: const InputDecoration(labelText: 'Email'),
+              validator: (value) => (value?.trim() ?? '').contains('@')
+                  ? null
+                  : 'Enter a valid email',
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              Navigator.pop(context, _controller.text.trim());
+            }
+          },
+          child: const Text('Send link'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Shown while repairing an account that has a login but no profile.
+class _ProfileRecovery extends StatefulWidget {
+  const _ProfileRecovery({
+    required this.user,
+    required this.authService,
+    required this.onSignOut,
+  });
+
+  final User user;
+  final AuthService authService;
+  final Future<void> Function() onSignOut;
+
+  @override
+  State<_ProfileRecovery> createState() => _ProfileRecoveryState();
+}
+
+class _ProfileRecoveryState extends State<_ProfileRecovery> {
+  late Future<AppUser> _recovery = _recover();
+
+  Future<AppUser> _recover() =>
+      widget.authService.ensureUserProfileExists(widget.user);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<AppUser>(
+      future: _recovery,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _AuthStatusScreen(
+            title: 'Could not finish setting up your account',
+            message: 'Check your connection and try again.',
+            actionLabel: 'Try again',
+            onAction: () async => setState(() => _recovery = _recover()),
+            secondaryLabel: 'Sign out',
+            onSecondary: widget.onSignOut,
+          );
+        }
+        // On success the profile stream replaces this screen.
+        return const _LoadingScreen();
+      },
+    );
+  }
+}
+
 class _AuthStatusScreen extends StatelessWidget {
   const _AuthStatusScreen({
     required this.title,
     required this.message,
     required this.actionLabel,
     required this.onAction,
+    this.secondaryLabel,
+    this.onSecondary,
   });
 
   final String title;
   final String message;
   final String actionLabel;
   final Future<void> Function() onAction;
+  final String? secondaryLabel;
+  final Future<void> Function()? onSecondary;
 
   @override
   Widget build(BuildContext context) {
@@ -413,11 +672,20 @@ class _AuthStatusScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
               const SizedBox(height: 8),
               Text(message, textAlign: TextAlign.center),
               const SizedBox(height: 16),
               FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              if (secondaryLabel != null && onSecondary != null)
+                TextButton(
+                  onPressed: onSecondary,
+                  child: Text(secondaryLabel!),
+                ),
             ],
           ),
         ),

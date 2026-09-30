@@ -18,21 +18,53 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="FixNear connects you with trusted local service providers for plumbing, electrical, cleaning, repairs and more. Request a service, compare quotes, and book with confidence.">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1E7AF9">
+
+  <!-- Social sharing -->
+  <meta property="og:title" content="FixNear – Find trusted help nearby">
+  <meta property="og:description" content="Request local services, compare provider quotes, and track every job from booking to payment.">
+  <meta property="og:type" content="website">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="fixnear">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="FixNear">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>fixnear</title>
+  <title>FixNear – Find trusted help nearby</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    html, body { margin: 0; height: 100%; background: #F5F7FB; }
+    #fixnear-loading {
+      position: fixed; inset: 0; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 16px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: #12314D; transition: opacity .3s ease;
+    }
+    #fixnear-loading .brand { font-size: 28px; font-weight: 800; letter-spacing: -0.8px; }
+    #fixnear-loading .spinner {
+      width: 28px; height: 28px; border-radius: 50%;
+      border: 3px solid #DCE8FB; border-top-color: #1E7AF9;
+      animation: fixnear-spin .8s linear infinite;
+    }
+    @keyframes fixnear-spin { to { transform: rotate(360deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      #fixnear-loading .spinner { animation-duration: 2.4s; }
+    }
+  </style>
 </head>
 <body>
+  <div id="fixnear-loading" role="status" aria-live="polite">
+    <div class="brand">FixNear</div>
+    <div class="spinner" aria-hidden="true"></div>
+    <noscript>FixNear needs JavaScript enabled to run.</noscript>
+  </div>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
@@ -41,6 +73,28 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // Fade out the loading screen once Flutter renders its first frame.
+    window.addEventListener('flutter-first-frame', function () {
+      var loader = document.getElementById('fixnear-loading');
+      if (!loader) return;
+      loader.style.opacity = '0';
+      setTimeout(function () { loader.remove(); }, 300);
+    });
+  </script>
+  <!-- Google Maps for the pin picker. maps-config.js is not committed; copy
+       maps-config.example.js to maps-config.js and add a referrer-restricted
+       key. Without it, the app works and hides the map. -->
+  <script src="maps-config.js" onerror="void 0"></script>
+  <script>
+    if (window.FIXNEAR_MAPS_API_KEY) {
+      var maps = document.createElement('script');
+      maps.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+        encodeURIComponent(window.FIXNEAR_MAPS_API_KEY);
+      maps.async = true;
+      document.head.appendChild(maps);
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
