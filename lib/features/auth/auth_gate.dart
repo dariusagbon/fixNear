@@ -60,11 +60,50 @@ class _AuthGateState extends State<AuthGate> {
 
             final profile = profileSnapshot.data;
             if (profile == null) {
-              return _AuthStatusScreen(
-                title: 'Account profile missing',
-                message: 'Your account has no FixNear profile. Please contact support.',
-                actionLabel: 'Sign out',
-                onAction: _authService.signOut,
+              return FutureBuilder<AppUser?>(
+                future: _authService.ensureUserProfileExists(user),
+                builder: (context, recoverySnapshot) {
+                  if (recoverySnapshot.connectionState == ConnectionState.waiting) {
+                    return const _LoadingScreen();
+                  }
+                  if (recoverySnapshot.hasError || recoverySnapshot.data == null) {
+                    return _AuthStatusScreen(
+                      title: 'Account profile missing',
+                      message:
+                          'Your account could not be restored. Please try signing out and back in.',
+                      actionLabel: 'Sign out',
+                      onAction: _authService.signOut,
+                    );
+                  }
+                  return switch (recoverySnapshot.data!.role) {
+                    UserRole.customer => CustomerMarketplaceScreen(
+                      customerUid: recoverySnapshot.data!.id,
+                      customerName: recoverySnapshot.data!.name,
+                      photoUrl: recoverySnapshot.data!.photoUrl,
+                      repository: _marketplace,
+                      onSignOut: _authService.signOut,
+                      onUpdateProfilePhoto: (bytes, fileName) =>
+                          _authService.updateProfilePhoto(
+                            uid: recoverySnapshot.data!.id,
+                            bytes: bytes,
+                            fileName: fileName,
+                          ),
+                    ),
+                    UserRole.provider => ProviderHomeScreen(
+                      providerUid: recoverySnapshot.data!.id,
+                      providerName: recoverySnapshot.data!.name,
+                      photoUrl: recoverySnapshot.data!.photoUrl,
+                      repository: _marketplace,
+                      onSignOut: _authService.signOut,
+                      onUpdateProfilePhoto: (bytes, fileName) =>
+                          _authService.updateProfilePhoto(
+                            uid: recoverySnapshot.data!.id,
+                            bytes: bytes,
+                            fileName: fileName,
+                          ),
+                    ),
+                  };
+                },
               );
             }
 
@@ -72,14 +111,28 @@ class _AuthGateState extends State<AuthGate> {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
                 customerName: profile.name,
+                photoUrl: profile.photoUrl,
                 repository: _marketplace,
                 onSignOut: _authService.signOut,
+                onUpdateProfilePhoto: (bytes, fileName) =>
+                    _authService.updateProfilePhoto(
+                      uid: profile.id,
+                      bytes: bytes,
+                      fileName: fileName,
+                    ),
               ),
               UserRole.provider => ProviderHomeScreen(
                 providerUid: profile.id,
                 providerName: profile.name,
+                photoUrl: profile.photoUrl,
                 repository: _marketplace,
                 onSignOut: _authService.signOut,
+                onUpdateProfilePhoto: (bytes, fileName) =>
+                    _authService.updateProfilePhoto(
+                      uid: profile.id,
+                      bytes: bytes,
+                      fileName: fileName,
+                    ),
               ),
             };
           },

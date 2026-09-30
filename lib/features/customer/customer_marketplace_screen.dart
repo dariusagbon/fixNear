@@ -1,7 +1,11 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/models/marketplace_models.dart';
+import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
@@ -13,14 +17,19 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     required this.customerUid,
     required this.customerName,
     required this.repository,
+    this.photoUrl,
     this.onSignOut,
+    this.onUpdateProfilePhoto,
     super.key,
   });
 
   final String customerUid;
   final String customerName;
+  final String? photoUrl;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
+  final Future<String> Function(Uint8List bytes, String fileName)?
+  onUpdateProfilePhoto;
 
   @override
   State<CustomerMarketplaceScreen> createState() =>
@@ -310,6 +319,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Widget _buildAccount() {
+    final avatar = widget.photoUrl;
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
@@ -318,13 +328,16 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           children: [
             CircleAvatar(
               radius: 34,
-              child: Text(
-                initialsFor(widget.customerName),
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+              backgroundImage: avatar == null ? null : NetworkImage(avatar),
+              child: avatar == null
+                  ? Text(
+                      initialsFor(widget.customerName),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    )
+                  : null,
             ),
             const SizedBox(height: 12),
             Text(
@@ -334,6 +347,13 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
             const SizedBox(height: 4),
             const Text('Customer account'),
             const SizedBox(height: 20),
+            if (widget.onUpdateProfilePhoto != null)
+              OutlinedButton.icon(
+                onPressed: _uploadProfilePhoto,
+                icon: const Icon(Icons.photo_camera_outlined),
+                label: const Text('Upload photo'),
+              ),
+            const SizedBox(height: 12),
             if (widget.onSignOut != null)
               OutlinedButton.icon(
                 onPressed: widget.onSignOut,
@@ -363,6 +383,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
               latitude,
               longitude,
               scheduledAt,
+              photoUrls,
             ) => widget.repository.createRequest(
               customerUid: widget.customerUid,
               customerName: widget.customerName,
@@ -374,6 +395,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
               longitude: longitude,
               provider: provider,
               scheduledAt: scheduledAt,
+              photoUrls: photoUrls,
             ),
       ),
     );
@@ -381,6 +403,40 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Service request sent.')));
       setState(() => _selectedTab = 1);
+    }
+  }
+
+  Future<void> _uploadProfilePhoto() async {
+    if (widget.onUpdateProfilePhoto == null) return;
+
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (image == null || !mounted) return;
+
+      final bytes = await image.readAsBytes();
+      await widget.onUpdateProfilePhoto!(bytes, image.name);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile photo updated.')),
+      );
+      setState(() {});
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(
+              error,
+              'Could not update your profile photo.',
+            ),
+          ),
+        ),
+      );
     }
   }
 
@@ -659,6 +715,7 @@ class _NewRequestSheet extends StatefulWidget {
     double? latitude,
     double? longitude,
     DateTime scheduledAt,
+    List<String> photoUrls,
   )
   onSubmit;
 
@@ -675,6 +732,8 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
   DateTime? _scheduledAt;
   double? _latitude;
   double? _longitude;
+  final List<XFile> _selectedImages = [];
+  final List<String> _uploadedImageUrls = [];
   bool _isSubmitting = false;
   String? _error;
 
@@ -794,6 +853,58 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
                   ? 'Enter the service area'
                   : null,
             ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickPhotos,
+                    icon: const Icon(Icons.photo_library_outlined),
+                    label: const Text('Add photo'),
+                  ),
+                ),
+                if (_selectedImages.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(left: 8),
+                    child: Text('${_selectedImages.length} selected'),
+                  ),
+              ],
+            ),
+            if (_selectedImages.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                height: 90,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _selectedImages.length,
+                  separatorBuilder: (_, _) => const SizedBox(width: 8),
+                  itemBuilder: (context, index) {
+                    final image = _selectedImages[index];
+                    return FutureBuilder<Uint8List>(
+                      future: image.readAsBytes(),
+                      builder: (context, snapshot) {
+                        if (!snapshot.hasData) {
+                          return const SizedBox(
+                            width: 80,
+                            height: 80,
+                            child: Center(child: CircularProgressIndicator()),
+                          );
+                        }
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: Image.memory(
+                            snapshot.data!,
+                            width: 80,
+                            height: 80,
+                            fit: BoxFit.cover,
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
             if (_error != null) ...[
               const SizedBox(height: 10),
               Text(
@@ -829,6 +940,20 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       _error = null;
     });
     try {
+      _uploadedImageUrls.clear();
+      if (_selectedImages.isNotEmpty) {
+        final cloudinary = CloudinaryService();
+        for (final image in _selectedImages) {
+          final bytes = await image.readAsBytes();
+          final url = await cloudinary.uploadImage(
+            bytes: bytes,
+            fileName: image.name,
+            folder: 'fixnear/service-requests',
+          );
+          _uploadedImageUrls.add(url);
+        }
+      }
+
       await widget.onSubmit(
         _category,
         _descriptionController.text,
@@ -839,6 +964,7 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         _latitude,
         _longitude,
         _scheduledAt!,
+        _uploadedImageUrls,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (_) {
@@ -881,6 +1007,28 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         _error = friendlyErrorMessage(
           error,
           'Could not access your current location. Type it instead.',
+        );
+      });
+    }
+  }
+
+  Future<void> _pickPhotos() async {
+    try {
+      final picker = ImagePicker();
+      final photos = await picker.pickMultiImage();
+      if (photos.isEmpty) return;
+      setState(() {
+        _selectedImages
+          ..clear()
+          ..addAll(photos);
+        _error = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _error = friendlyErrorMessage(
+          error,
+          'Could not add photos. Please try again.',
         );
       });
     }

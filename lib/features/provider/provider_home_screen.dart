@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/marketplace_service.dart';
@@ -7,19 +10,60 @@ import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
-class ProviderHomeScreen extends StatelessWidget {
+class ProviderHomeScreen extends StatefulWidget {
   const ProviderHomeScreen({
     required this.providerUid,
     required this.providerName,
     required this.repository,
+    this.photoUrl,
     this.onSignOut,
+    this.onUpdateProfilePhoto,
     super.key,
   });
 
   final String providerUid;
   final String providerName;
+  final String? photoUrl;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
+  final Future<String> Function(Uint8List bytes, String fileName)?
+  onUpdateProfilePhoto;
+
+  @override
+  State<ProviderHomeScreen> createState() => _ProviderHomeScreenState();
+}
+
+class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
+  Future<void> _uploadProfilePhoto() async {
+    if (widget.onUpdateProfilePhoto == null) return;
+
+    try {
+      final picker = ImagePicker();
+      final image = await picker.pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 85,
+      );
+      if (image == null || !mounted) return;
+
+      final bytes = await image.readAsBytes();
+      await widget.onUpdateProfilePhoto!(bytes, image.name);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profile photo updated.')),
+      );
+      setState(() {});
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Could not update your profile photo. ${error.toString()}',
+          ),
+        ),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,12 +71,29 @@ class ProviderHomeScreen extends StatelessWidget {
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Provider workspace'),
+          title: Row(
+            children: [
+              if (widget.photoUrl != null) ...[
+                CircleAvatar(
+                  radius: 18,
+                  backgroundImage: NetworkImage(widget.photoUrl!),
+                ),
+                const SizedBox(width: 10),
+              ],
+              Text(widget.providerName),
+            ],
+          ),
           actions: [
-            if (onSignOut != null)
+            if (widget.onUpdateProfilePhoto != null)
+              IconButton(
+                tooltip: 'Update profile photo',
+                onPressed: _uploadProfilePhoto,
+                icon: const Icon(Icons.photo_camera_outlined),
+              ),
+            if (widget.onSignOut != null)
               IconButton(
                 tooltip: 'Sign out',
-                onPressed: onSignOut,
+                onPressed: widget.onSignOut,
                 icon: const Icon(Icons.logout_rounded),
               ),
           ],
@@ -46,7 +107,7 @@ class ProviderHomeScreen extends StatelessWidget {
         body: TabBarView(
           children: [
             _RequestList(
-              requests: repository.watchOpenRequests(providerUid),
+              requests: widget.repository.watchOpenRequests(widget.providerUid),
               emptyMessage: 'No open requests nearby yet.',
               actionLabel: 'Send quote',
               onAction: (request) async {
@@ -55,10 +116,10 @@ class ProviderHomeScreen extends StatelessWidget {
                   builder: (_) => const _QuoteDialog(),
                 );
                 if (quote == null) return;
-                await repository.sendQuote(
+                await widget.repository.sendQuote(
                   requestId: request.id,
-                  providerUid: providerUid,
-                  providerName: providerName,
+                  providerUid: widget.providerUid,
+                  providerName: widget.providerName,
                   price: quote.price,
                   note: quote.note,
                 );
@@ -67,10 +128,10 @@ class ProviderHomeScreen extends StatelessWidget {
                     .showSnackBar(const SnackBar(content: Text('Quote sent.')));
               },
               onDecline: (request) =>
-                  repository.declineRequest(request.id, providerUid),
+                  widget.repository.declineRequest(request.id, widget.providerUid),
             ),
             _RequestList(
-              requests: repository.watchProviderJobs(providerUid),
+              requests: widget.repository.watchProviderJobs(widget.providerUid),
               emptyMessage: 'Accepted jobs will appear here.',
               actionLabel: null,
               onAction: (request) {
@@ -82,17 +143,17 @@ class ProviderHomeScreen extends StatelessWidget {
                   _ => null,
                 };
                 if (nextStatus == null) return Future.value();
-                return repository.advanceRequest(request.id, nextStatus);
+                return widget.repository.advanceRequest(request.id, nextStatus);
               },
               onOpenChat: (request) => showJobChatSheet(
                 context: context,
                 requestId: request.id,
-                currentUid: providerUid,
-                currentName: providerName,
-                repository: repository,
+                currentUid: widget.providerUid,
+                currentName: widget.providerName,
+                repository: widget.repository,
               ),
               onConfirmCashPayment: (request) =>
-                  repository.confirmCashPayment(request.id, providerUid),
+                  widget.repository.confirmCashPayment(request.id, widget.providerUid),
               showProgressActions: true,
             ),
           ],

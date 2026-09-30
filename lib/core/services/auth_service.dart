@@ -1,7 +1,10 @@
+import 'dart:typed_data';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/app_user.dart';
+import 'cloudinary_service.dart';
 
 class AuthService {
   AuthService({FirebaseAuth? firebaseAuth, FirebaseFirestore? firestore})
@@ -74,6 +77,30 @@ class AuthService {
     return credential;
   }
 
+  Future<String> updateProfilePhoto({
+    required String uid,
+    required Uint8List bytes,
+    required String fileName,
+    String? folder,
+  }) async {
+    final cloudinary = CloudinaryService();
+    final photoUrl = await cloudinary.uploadImage(
+      bytes: bytes,
+      fileName: fileName,
+      folder: folder ?? 'fixnear/profile-photos',
+    );
+
+    await _firestore.collection('users').doc(uid).update({'photoUrl': photoUrl});
+
+    final providerRef = _firestore.collection('providerProfiles').doc(uid);
+    final providerDoc = await providerRef.get();
+    if (providerDoc.exists) {
+      await providerRef.update({'photoUrl': photoUrl});
+    }
+
+    return photoUrl;
+  }
+
   Future<void> signOut() async {
     await _auth.signOut();
   }
@@ -85,6 +112,35 @@ class AuthService {
     }
 
     return AppUser.fromMap(snapshot.data()!, snapshot.id);
+  }
+
+  Future<AppUser?> ensureUserProfileExists(User user) async {
+    final existing = await getUserProfile(user.uid);
+    if (existing != null) return existing;
+
+    final providerSnapshot = await _firestore
+        .collection('providerProfiles')
+        .doc(user.uid)
+        .get();
+    final role = providerSnapshot.exists ? UserRole.provider : UserRole.customer;
+
+    final fallback = AppUser(
+      id: user.uid,
+      email: user.email ?? '',
+      name: user.displayName?.trim().isNotEmpty == true
+          ? user.displayName!
+          : 'FixNear User',
+      role: role,
+      createdAt: DateTime.now(),
+      photoUrl: user.photoURL,
+    );
+
+    await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .set(fallback.toMap(), SetOptions(merge: true));
+
+    return fallback;
   }
 
   Stream<AppUser?> userProfileChanges(String uid) {
