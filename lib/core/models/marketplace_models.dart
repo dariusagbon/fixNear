@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../utils/geo.dart';
+
 const serviceCategories = [
   'Electrical',
   'Plumbing',
@@ -31,6 +33,8 @@ class ProviderProfile {
     required this.serviceArea,
     required this.startingPrice,
     required this.isAvailable,
+    this.baseLocation,
+    this.serviceRadiusKm = defaultServiceRadiusKm,
   });
 
   factory ProviderProfile.fromMap(Map<String, dynamic> data, String id) {
@@ -41,6 +45,12 @@ class ProviderProfile {
       serviceArea: data['serviceArea'] as String? ?? '',
       startingPrice: (data['startingPrice'] as num?)?.toInt() ?? 0,
       isAvailable: data['isAvailable'] as bool? ?? false,
+      // Providers who registered before distance matching have neither.
+      baseLocation: LatLngPoint.tryFrom(
+        data['baseLatitude'],
+        data['baseLongitude'],
+      ),
+      serviceRadiusKm: clampServiceRadiusKm(data['serviceRadiusKm']),
     );
   }
 
@@ -51,12 +61,21 @@ class ProviderProfile {
   final int startingPrice;
   final bool isAvailable;
 
+  /// Where the provider starts from; jobs are matched within
+  /// [serviceRadiusKm] of it.
+  final LatLngPoint? baseLocation;
+  final double serviceRadiusKm;
+
   Map<String, dynamic> toMap() => {
     'name': name,
     'category': category,
     'serviceArea': serviceArea,
     'startingPrice': startingPrice,
     'isAvailable': isAvailable,
+    'baseLatitude': baseLocation?.latitude,
+    'baseLongitude': baseLocation?.longitude,
+    'baseGeohash': baseLocation == null ? null : encodeGeohash(baseLocation!),
+    'serviceRadiusKm': serviceRadiusKm,
   };
 }
 
@@ -81,6 +100,7 @@ class ServiceRequest {
     this.locationLabel,
     this.latitude,
     this.longitude,
+    this.geohash,
   });
 
   factory ServiceRequest.fromMap(Map<String, dynamic> data, String id) {
@@ -115,12 +135,14 @@ class ServiceRequest {
           (data['declinedProviderUids'] as List<dynamic>? ?? const [])
               .whereType<String>()
               .toList(),
-      locationLabel: (data['locationLabel'] as String?) ??
+      locationLabel:
+          (data['locationLabel'] as String?) ??
           (location is Map ? location['label'] as String? : null) ??
           data['serviceArea'] as String? ??
           '',
       latitude: latitude is num ? latitude.toDouble() : null,
       longitude: longitude is num ? longitude.toDouble() : null,
+      geohash: data['geohash'] as String?,
     );
   }
 
@@ -142,6 +164,7 @@ class ServiceRequest {
     'locationLabel': locationLabel ?? serviceArea,
     'latitude': latitude,
     'longitude': longitude,
+    'geohash': geohash,
   };
 
   final String id;
@@ -163,6 +186,10 @@ class ServiceRequest {
   final String? locationLabel;
   final double? latitude;
   final double? longitude;
+  final String? geohash;
+
+  /// The pinned location, or null for jobs posted without one.
+  LatLngPoint? get location => LatLngPoint.tryFrom(latitude, longitude);
 }
 
 class ProviderQuote {
@@ -221,4 +248,3 @@ class JobMessage {
   final String text;
   final DateTime createdAt;
 }
-  

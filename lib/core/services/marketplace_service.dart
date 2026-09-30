@@ -3,10 +3,31 @@ import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/marketplace_models.dart';
+import '../utils/geo.dart';
 
 abstract interface class MarketplaceRepository {
   Stream<List<ProviderProfile>> watchProviders();
+
+  /// A provider's own listing, whether or not they are online.
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid);
+
+  /// Takes a provider online (shown to customers) or offline.
+  Future<void> setProviderAvailability(String providerUid, bool isAvailable);
+
+  /// Saves what a provider offers and where: jobs are matched within
+  /// [serviceRadiusKm] of [baseLocation].
+  Future<void> updateProviderServiceSettings({
+    required String providerUid,
+    required String category,
+    required String serviceArea,
+    required int startingPrice,
+    required LatLngPoint? baseLocation,
+    required double serviceRadiusKm,
+  });
   Stream<List<ServiceRequest>> watchCustomerRequests(String customerUid);
+
+  /// A single job, or null if it doesn't exist or can't be read.
+  Stream<ServiceRequest?> watchRequest(String requestId);
   Stream<List<ServiceRequest>> watchOpenRequests(String providerUid);
   Stream<List<ServiceRequest>> watchProviderJobs(String providerUid);
   Stream<List<ProviderQuote>> watchQuotes(String requestId);
@@ -74,6 +95,58 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
         .where('customerUid', isEqualTo: customerUid)
         .snapshots()
         .map(_mapRequests);
+  }
+
+  @override
+  Stream<ProviderProfile?> watchProviderProfile(String providerUid) {
+    return _firestore
+        .collection('providerProfiles')
+        .doc(providerUid)
+        .snapshots()
+        .map((snapshot) {
+          final data = snapshot.data();
+          return data == null
+              ? null
+              : ProviderProfile.fromMap(data, snapshot.id);
+        });
+  }
+
+  @override
+  Future<void> setProviderAvailability(
+    String providerUid,
+    bool isAvailable,
+  ) async {
+    await _firestore.collection('providerProfiles').doc(providerUid).update({
+      'isAvailable': isAvailable,
+    });
+  }
+
+  @override
+  Future<void> updateProviderServiceSettings({
+    required String providerUid,
+    required String category,
+    required String serviceArea,
+    required int startingPrice,
+    required LatLngPoint? baseLocation,
+    required double serviceRadiusKm,
+  }) async {
+    await _firestore.collection('providerProfiles').doc(providerUid).update({
+      'category': category,
+      'serviceArea': serviceArea.trim(),
+      'startingPrice': startingPrice,
+      'baseLatitude': baseLocation?.latitude,
+      'baseLongitude': baseLocation?.longitude,
+      'baseGeohash': baseLocation == null ? null : encodeGeohash(baseLocation),
+      'serviceRadiusKm': clampServiceRadiusKm(serviceRadiusKm),
+    });
+  }
+
+  @override
+  Stream<ServiceRequest?> watchRequest(String requestId) {
+    return _requests.doc(requestId).snapshots().map((snapshot) {
+      final data = snapshot.data();
+      return data == null ? null : ServiceRequest.fromMap(data, snapshot.id);
+    });
   }
 
   @override
@@ -173,6 +246,7 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
     List<String> photoUrls = const [],
   }) async {
     final request = _requests.doc();
+    final location = LatLngPoint.tryFrom(latitude, longitude);
     await request.set({
       'customerUid': customerUid,
       'customerName': customerName,
@@ -180,8 +254,9 @@ class FirestoreMarketplaceRepository implements MarketplaceRepository {
       'description': description.trim(),
       'serviceArea': serviceArea.trim(),
       'locationLabel': (locationLabel ?? serviceArea).trim(),
-      'latitude': latitude,
-      'longitude': longitude,
+      'latitude': location?.latitude,
+      'longitude': location?.longitude,
+      'geohash': location == null ? null : encodeGeohash(location),
       'providerUid': provider?.id,
       'providerName': provider?.name,
       'status': RequestStatus.requested,

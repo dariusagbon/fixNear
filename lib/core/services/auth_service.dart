@@ -114,35 +114,6 @@ class AuthService {
     return AppUser.fromMap(snapshot.data()!, snapshot.id);
   }
 
-  Future<AppUser?> ensureUserProfileExists(User user) async {
-    final existing = await getUserProfile(user.uid);
-    if (existing != null) return existing;
-
-    final providerSnapshot = await _firestore
-        .collection('providerProfiles')
-        .doc(user.uid)
-        .get();
-    final role = providerSnapshot.exists ? UserRole.provider : UserRole.customer;
-
-    final fallback = AppUser(
-      id: user.uid,
-      email: user.email ?? '',
-      name: user.displayName?.trim().isNotEmpty == true
-          ? user.displayName!
-          : 'FixNear User',
-      role: role,
-      createdAt: DateTime.now(),
-      photoUrl: user.photoURL,
-    );
-
-    await _firestore
-        .collection('users')
-        .doc(user.uid)
-        .set(fallback.toMap(), SetOptions(merge: true));
-
-    return fallback;
-  }
-
   Stream<AppUser?> userProfileChanges(String uid) {
     return _firestore.collection('users').doc(uid).snapshots().map((snapshot) {
       final data = snapshot.data();

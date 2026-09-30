@@ -4,8 +4,12 @@ import 'package:flutter/material.dart';
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/auth_service.dart';
+import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
+import '../../core/theme/app_theme.dart';
 import '../customer/customer_marketplace_screen.dart';
+import '../notifications/notification_host.dart';
 import '../provider/provider_home_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -18,6 +22,16 @@ class AuthGate extends StatefulWidget {
 class _AuthGateState extends State<AuthGate> {
   final AuthService _authService = AuthService();
   final MarketplaceRepository _marketplace = FirestoreMarketplaceRepository();
+  final ImageUploader _imageUploader = CloudinaryService();
+  late final PushNotifications _push = FirebasePushNotifications();
+
+  /// Removes this device's push token while still signed in (the rules need
+  /// the user), then signs out.
+  Future<void> _signOut(String uid) async {
+    await _push.unregisterDevice(uid);
+    await _authService.signOut();
+  }
+
   late final Stream<User?> _authStateChanges = _authService.authStateChanges();
 
   @override
@@ -107,18 +121,31 @@ class _AuthGateState extends State<AuthGate> {
               );
             }
 
-            return switch (profile.role) {
+            final home = switch (profile.role) {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
                 customerName: profile.name,
                 photoUrl: profile.photoUrl,
                 repository: _marketplace,
+<<<<<<< HEAD
                 onSignOut: _authService.signOut,
                 onUpdateProfilePhoto: (bytes, fileName) =>
                     _authService.updateProfilePhoto(
                       uid: profile.id,
                       bytes: bytes,
                       fileName: fileName,
+=======
+                onSignOut: () => _signOut(profile.id),
+                profile: profile,
+                imageUploader: _imageUploader,
+                push: _push,
+                onSaveProfile: ({required name, phone, photoUrl}) =>
+                    _authService.updateProfile(
+                      uid: profile.id,
+                      name: name,
+                      phone: phone,
+                      photoUrl: photoUrl,
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
                     ),
               ),
               UserRole.provider => ProviderHomeScreen(
@@ -126,6 +153,7 @@ class _AuthGateState extends State<AuthGate> {
                 providerName: profile.name,
                 photoUrl: profile.photoUrl,
                 repository: _marketplace,
+<<<<<<< HEAD
                 onSignOut: _authService.signOut,
                 onUpdateProfilePhoto: (bytes, fileName) =>
                     _authService.updateProfilePhoto(
@@ -133,8 +161,22 @@ class _AuthGateState extends State<AuthGate> {
                       bytes: bytes,
                       fileName: fileName,
                     ),
+=======
+                onSignOut: () => _signOut(profile.id),
+                push: _push,
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
               ),
             };
+            return NotificationHost(
+              // A new user gets a fresh host (and token registration).
+              key: ValueKey(profile.id),
+              push: _push,
+              repository: _marketplace,
+              uid: profile.id,
+              name: profile.name,
+              role: profile.role,
+              child: home,
+            );
           },
         );
       },
@@ -237,7 +279,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     const Icon(
                       Icons.handyman_rounded,
                       size: 40,
-                      color: Color(0xFF1E7AF9),
+                      color: AppTheme.ink,
                     ),
                     const SizedBox(height: 12),
                     const Text(
@@ -256,7 +298,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 15,
-                        color: Color(0xFF5F6F85),
+                        color: AppTheme.inkMuted,
                       ),
                     ),
                     const SizedBox(height: 28),
@@ -273,6 +315,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 14),
                       DropdownButtonFormField<UserRole>(
                         initialValue: _role,
+                        isExpanded: true,
+                        elevation: 0,
+                        dropdownColor: AppTheme.tint,
+                        borderRadius: BorderRadius.circular(12),
                         decoration: const InputDecoration(
                           labelText: 'Account type',
                         ),
@@ -294,6 +340,10 @@ class _LoginScreenState extends State<LoginScreen> {
                       if (_role == UserRole.provider) ...[
                         DropdownButtonFormField<String>(
                           initialValue: _serviceCategory,
+                          isExpanded: true,
+                          elevation: 0,
+                          dropdownColor: AppTheme.tint,
+                          borderRadius: BorderRadius.circular(12),
                           decoration: const InputDecoration(
                             labelText: 'Main service',
                           ),

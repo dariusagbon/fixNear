@@ -46,3 +46,17 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Node (rules tests and Cloud Functions)
+node_modules/
+functions/lib/
+*-debug.log
+
+# Local env and secrets for Cloud Functions / emulators
+.env
+.env.*
+*.local
+
+# Google Maps keys (see README)
+web/maps-config.js
+ios/Flutter/Secrets.xcconfig

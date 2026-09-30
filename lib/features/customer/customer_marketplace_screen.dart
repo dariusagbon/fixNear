@@ -1,16 +1,29 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+<<<<<<< HEAD
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+=======
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
 
+import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/location_service.dart';
+import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/utils/geo.dart';
+import '../../core/utils/job_matching.dart';
+import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
-import '../messaging/job_chat_sheet.dart';
+import '../jobs/customer_job_card.dart';
+import '../jobs/job_detail_screen.dart';
+import '../location/map_pin_picker.dart';
+import '../notifications/notification_permission.dart';
+import '../profile/edit_profile_screen.dart';
 
 class CustomerMarketplaceScreen extends StatefulWidget {
   const CustomerMarketplaceScreen({
@@ -19,7 +32,16 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     required this.repository,
     this.photoUrl,
     this.onSignOut,
+<<<<<<< HEAD
     this.onUpdateProfilePhoto,
+=======
+    this.profile,
+    this.imageUploader,
+    this.onSaveProfile,
+    this.pickPhoto = pickPhotoWithImagePicker,
+    this.push,
+    this.location = const GeolocatorLocationService(),
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
     super.key,
   });
 
@@ -31,6 +53,19 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   final Future<String> Function(Uint8List bytes, String fileName)?
   onUpdateProfilePhoto;
 
+  /// The signed-in customer's profile. Profile editing is available when this,
+  /// [imageUploader] and [onSaveProfile] are all provided.
+  final AppUser? profile;
+  final ImageUploader? imageUploader;
+  final ProfileSaver? onSaveProfile;
+  final PhotoPicker pickPhoto;
+
+  /// Used to ask for notification permission after the first job is posted.
+  final PushNotifications? push;
+
+  /// Device location, for pinning jobs and showing provider distances.
+  final LocationService location;
+
   @override
   State<CustomerMarketplaceScreen> createState() =>
       _CustomerMarketplaceScreenState();
@@ -40,6 +75,34 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   final _searchController = TextEditingController();
   String? _selectedCategory;
   int _selectedTab = 0;
+
+  /// The customer's location for provider distances; only read without a
+  /// prompt, or after they tap "Show distances".
+  LatLngPoint? _here;
+  bool _locating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.location.currentIfPermitted().then((here) {
+      if (here != null && mounted) setState(() => _here = here);
+    });
+  }
+
+  Future<void> _showDistances() async {
+    setState(() => _locating = true);
+    try {
+      final here = await widget.location.requestCurrent();
+      if (mounted) setState(() => _here = here);
+    } on LocationUnavailable catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -89,7 +152,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.handyman_rounded, color: AppTheme.primaryBlue),
+              const Icon(Icons.handyman_rounded, color: AppTheme.ink),
               const SizedBox(width: 8),
               Text('FixNear', style: Theme.of(context).textTheme.titleLarge),
               const Spacer(),
@@ -97,6 +160,15 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                 tooltip: 'My requests',
                 onPressed: () => setState(() => _selectedTab = 1),
                 icon: const Icon(Icons.notifications_none_rounded),
+              ),
+              IconButton(
+                tooltip: 'Account',
+                onPressed: () => setState(() => _selectedTab = 2),
+                icon: ProfileAvatar(
+                  name: widget.customerName,
+                  photoUrl: widget.profile?.photoUrl,
+                  radius: 16,
+                ),
               ),
             ],
           ),
@@ -109,10 +181,8 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           const SizedBox(height: 4),
           Text(
             'What can we help you with?',
-            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-              fontWeight: FontWeight.w800,
-              color: AppTheme.textPrimary,
-            ),
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800, color: AppTheme.ink),
           ),
           const SizedBox(height: 16),
           TextField(
@@ -152,7 +222,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                   avatar: Icon(
                     _categoryIcon(category),
                     size: 18,
-                    color: selected ? Colors.white : AppTheme.primaryBlue,
+                    color: selected ? Colors.white : AppTheme.ink,
                   ),
                   showCheckmark: false,
                   onSelected: (_) =>
@@ -217,14 +287,27 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
               }
 
               return Column(
-                children: providers
-                    .map(
-                      (provider) => _ProviderCard(
-                        provider: provider,
-                        onRequest: () => _showRequestForm(provider: provider),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_here == null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _locating ? null : _showDistances,
+                        icon: const Icon(Icons.near_me_outlined),
+                        label: Text(
+                          _locating ? 'Finding you…' : 'Show distances',
+                        ),
                       ),
-                    )
-                    .toList(),
+                    ),
+                  for (final entry in withDistances(providers, _here))
+                    _ProviderCard(
+                      provider: entry.profile,
+                      distanceKm: entry.distanceKm,
+                      onRequest: () =>
+                          _showRequestForm(provider: entry.profile),
+                    ),
+                ],
               );
             },
           ),
@@ -273,41 +356,10 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                   padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
                   itemCount: requests.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) => _CustomerRequestCard(
+                  itemBuilder: (context, index) => CustomerRequestCard(
                     request: requests[index],
-                    quotes: widget.repository.watchQuotes(requests[index].id),
-                    onAcceptQuote: (quote) => _runWithFeedback(
-                      () => widget.repository.acceptQuote(
-                        requests[index].id,
-                        quote,
-                      ),
-                      failureMessage: 'Could not accept this quote.',
-                      successMessage: 'Quote accepted.',
-                    ),
-                    onCancel: () => _cancelRequest(requests[index]),
-                    onConfirmCompletion: () => _runWithFeedback(
-                      () => widget.repository.confirmCompletion(
-                        requests[index].id,
-                        widget.customerUid,
-                      ),
-                      failureMessage: 'Could not confirm completion.',
-                    ),
-                    onOpenChat: requests[index].providerUid == null
-                        ? null
-                        : () => showJobChatSheet(
-                            context: context,
-                            requestId: requests[index].id,
-                            currentUid: widget.customerUid,
-                            currentName: widget.customerName,
-                            repository: widget.repository,
-                          ),
-                    onPayCash: () => _runWithFeedback(
-                      () => widget.repository.recordCashPayment(
-                        requests[index].id,
-                        widget.customerUid,
-                      ),
-                      failureMessage: 'Could not record cash payment.',
-                    ),
+                    actions: _jobActions,
+                    onOpenDetails: () => _openJob(requests[index].id),
                   ),
                 );
               },
@@ -319,6 +371,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Widget _buildAccount() {
+<<<<<<< HEAD
     final avatar = widget.photoUrl;
     return Center(
       child: Padding(
@@ -338,12 +391,61 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                       ),
                     )
                   : null,
+=======
+    final profile = widget.profile;
+    final canEdit =
+        profile != null &&
+        widget.imageUploader != null &&
+        widget.onSaveProfile != null;
+    final textTheme = Theme.of(context).textTheme;
+    return ContentWidth(
+      maxWidth: 480,
+      child: ListView(
+        padding: const EdgeInsets.all(24),
+        children: [
+          const SizedBox(height: 12),
+          Center(
+            child: ProfileAvatar(
+              name: widget.customerName,
+              photoUrl: profile?.photoUrl,
+              radius: 44,
             ),
-            const SizedBox(height: 12),
-            Text(
-              widget.customerName,
-              style: Theme.of(context).textTheme.titleLarge,
+          ),
+          const SizedBox(height: 12),
+          Text(
+            widget.customerName,
+            textAlign: TextAlign.center,
+            style: textTheme.titleLarge,
+          ),
+          const SizedBox(height: 4),
+          const Text('Customer account', textAlign: TextAlign.center),
+          const SizedBox(height: 20),
+          if (profile != null)
+            Card(
+              child: Column(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.email_outlined),
+                    title: const Text('Email'),
+                    subtitle: Text(profile.email),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.phone_outlined),
+                    title: const Text('Phone'),
+                    subtitle: Text(profile.phone ?? 'Not added'),
+                  ),
+                ],
+              ),
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
             ),
+          const SizedBox(height: 20),
+          if (canEdit)
+            FilledButton.icon(
+              onPressed: () => _openEditProfile(profile),
+              icon: const Icon(Icons.edit_outlined),
+              label: const Text('Edit profile'),
+            ),
+<<<<<<< HEAD
             const SizedBox(height: 4),
             const Text('Customer account'),
             const SizedBox(height: 20),
@@ -361,6 +463,28 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                 label: const Text('Sign out'),
               ),
           ],
+=======
+          const SizedBox(height: 10),
+          if (widget.onSignOut != null)
+            OutlinedButton.icon(
+              onPressed: widget.onSignOut,
+              icon: const Icon(Icons.logout_rounded),
+              label: const Text('Sign out'),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _openEditProfile(AppUser profile) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditProfileScreen(
+          profile: profile,
+          uploader: widget.imageUploader!,
+          onSave: widget.onSaveProfile!,
+          pickPhoto: widget.pickPhoto,
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
         ),
       ),
     );
@@ -372,6 +496,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => _NewRequestSheet(
+        location: widget.location,
         initialCategory: provider?.category ?? _selectedCategory,
         provider: provider,
         onSubmit:
@@ -403,9 +528,22 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Service request sent.')));
       setState(() => _selectedTab = 1);
+      final push = widget.push;
+      if (push != null) {
+        await askForNotificationsIfUseful(
+          context: context,
+          push: push,
+          uid: widget.customerUid,
+          title: 'Get updates on your job?',
+          reason:
+              'Turn on notifications to hear when providers send quotes, '
+              'when your provider is on the way, and when they message you.',
+        );
+      }
     }
   }
 
+<<<<<<< HEAD
   Future<void> _uploadProfilePhoto() async {
     if (widget.onUpdateProfilePhoto == null) return;
 
@@ -447,44 +585,26 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
         title: const Text('Cancel this request?'),
         content: Text(
           'Providers will no longer see your ${request.category.toLowerCase()} request.',
+=======
+  CustomerJobActions get _jobActions => CustomerJobActions(
+    repository: widget.repository,
+    customerUid: widget.customerUid,
+    customerName: widget.customerName,
+  );
+
+  void _openJob(String requestId) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JobDetailScreen(
+          requestId: requestId,
+          viewerUid: widget.customerUid,
+          viewerName: widget.customerName,
+          viewerRole: UserRole.customer,
+          repository: widget.repository,
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Keep request'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Cancel request'),
-          ),
-        ],
       ),
     );
-    if (confirmed != true) return;
-    await _runWithFeedback(
-      () => widget.repository.cancelRequest(request.id),
-      failureMessage: 'Could not cancel this request.',
-      successMessage: 'Request cancelled.',
-    );
-  }
-
-  Future<void> _runWithFeedback(
-    Future<void> Function() action, {
-    required String failureMessage,
-    String? successMessage,
-  }) async {
-    try {
-      await action();
-      if (successMessage != null && mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(successMessage)));
-      }
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendlyErrorMessage(error, failureMessage))),
-      );
-    }
   }
 
   IconData _categoryIcon(String? category) => switch (category) {
@@ -500,10 +620,15 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
 }
 
 class _ProviderCard extends StatelessWidget {
-  const _ProviderCard({required this.provider, required this.onRequest});
+  const _ProviderCard({
+    required this.provider,
+    required this.onRequest,
+    this.distanceKm,
+  });
 
   final ProviderProfile provider;
   final VoidCallback onRequest;
+  final double? distanceKm;
 
   @override
   Widget build(BuildContext context) {
@@ -533,11 +658,7 @@ class _ProviderCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                const Icon(
-                  Icons.circle,
-                  size: 10,
-                  color: AppTheme.successGreen,
-                ),
+                const Icon(Icons.circle, size: 10, color: AppTheme.success),
                 const SizedBox(width: 5),
                 const Text('Available', style: TextStyle(fontSize: 12)),
               ],
@@ -547,7 +668,13 @@ class _ProviderCard extends StatelessWidget {
               children: [
                 const Icon(Icons.location_on_outlined, size: 17),
                 const SizedBox(width: 4),
-                Expanded(child: Text(provider.serviceArea)),
+                Expanded(
+                  child: Text(
+                    distanceKm == null
+                        ? provider.serviceArea
+                        : '${provider.serviceArea} · ${formatDistance(distanceKm!)}',
+                  ),
+                ),
                 Text(
                   'From ${formatPeso(provider.startingPrice)}',
                   style: Theme.of(context).textTheme.titleSmall,
@@ -570,143 +697,17 @@ class _ProviderCard extends StatelessWidget {
   }
 }
 
-class _CustomerRequestCard extends StatelessWidget {
-  const _CustomerRequestCard({
-    required this.request,
-    required this.quotes,
-    required this.onAcceptQuote,
-    required this.onCancel,
-    required this.onConfirmCompletion,
-    required this.onOpenChat,
-    required this.onPayCash,
-  });
-
-  final ServiceRequest request;
-  final Stream<List<ProviderQuote>> quotes;
-  final Future<void> Function(ProviderQuote quote) onAcceptQuote;
-  final VoidCallback onCancel;
-  final Future<void> Function() onConfirmCompletion;
-  final VoidCallback? onOpenChat;
-  final Future<void> Function() onPayCash;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    request.category,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                ),
-                StatusChip(status: request.status),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(request.description),
-            const SizedBox(height: 6),
-            Text('Area: ${request.serviceArea}'),
-            if (request.scheduledAt != null)
-              Text('Scheduled: ${formatDateTime(request.scheduledAt!)}'),
-            if (request.providerName != null)
-              Text('Provider: ${request.providerName}'),
-            if (request.quotedPrice != null)
-              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
-            if (onOpenChat != null && request.status != RequestStatus.cancelled)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: onOpenChat,
-                  icon: const Icon(Icons.chat_bubble_outline_rounded),
-                  label: const Text('Chat'),
-                ),
-              ),
-            if (request.status == RequestStatus.requested ||
-                request.status == RequestStatus.quoted)
-              StreamBuilder<List<ProviderQuote>>(
-                stream: quotes,
-                builder: (context, snapshot) {
-                  final availableQuotes =
-                      snapshot.data ?? const <ProviderQuote>[];
-                  if (availableQuotes.isEmpty) return const SizedBox.shrink();
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 12),
-                      Text(
-                        'Provider quotes',
-                        style: Theme.of(context).textTheme.titleSmall,
-                      ),
-                      for (final quote in availableQuotes)
-                        ListTile(
-                          contentPadding: EdgeInsets.zero,
-                          title: Text(
-                            '${quote.providerName} · ${formatPeso(quote.price)}',
-                          ),
-                          subtitle: Text(quote.note),
-                          trailing: FilledButton(
-                            onPressed: () => onAcceptQuote(quote),
-                            child: const Text('Accept'),
-                          ),
-                        ),
-                    ],
-                  );
-                },
-              ),
-            if (request.status == RequestStatus.providerCompleted)
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton(
-                  onPressed: onConfirmCompletion,
-                  child: const Text('Confirm completion'),
-                ),
-              ),
-            if (request.status == RequestStatus.completed &&
-                request.paymentStatus == 'unpaid')
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: onPayCash,
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Pay cash'),
-                ),
-              ),
-            if (request.paymentStatus == 'pending_provider_confirmation')
-              const Text('Cash payment awaiting provider confirmation.'),
-            if (request.paymentStatus == 'paid')
-              const Text('Payment confirmed.'),
-            if (request.status == RequestStatus.requested ||
-                request.status == RequestStatus.quoted)
-              Align(
-                alignment: Alignment.centerRight,
-                child: TextButton.icon(
-                  onPressed: onCancel,
-                  icon: const Icon(Icons.close_rounded),
-                  label: const Text('Cancel request'),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _NewRequestSheet extends StatefulWidget {
   const _NewRequestSheet({
     required this.initialCategory,
     required this.provider,
+    required this.location,
     required this.onSubmit,
   });
 
   final String? initialCategory;
   final ProviderProfile? provider;
+  final LocationService location;
   final Future<void> Function(
     String category,
     String description,
@@ -730,10 +731,14 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
   final _locationController = TextEditingController();
   late String _category;
   DateTime? _scheduledAt;
+<<<<<<< HEAD
   double? _latitude;
   double? _longitude;
   final List<XFile> _selectedImages = [];
   final List<String> _uploadedImageUrls = [];
+=======
+  LatLngPoint? _pin;
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
   bool _isSubmitting = false;
   String? _error;
 
@@ -776,6 +781,10 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
               initialValue: _category,
+              isExpanded: true,
+              elevation: 0,
+              dropdownColor: AppTheme.tint,
+              borderRadius: BorderRadius.circular(12),
               decoration: const InputDecoration(labelText: 'Service category'),
               items: serviceCategories
                   .map(
@@ -828,21 +837,38 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
               ),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: _useCurrentLocation,
-                icon: const Icon(Icons.my_location_rounded),
-                label: const Text('Use my current location'),
-              ),
-            ),
-            if (_latitude != null && _longitude != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Pinned: ${_latitude!.toStringAsFixed(4)}, ${_longitude!.toStringAsFixed(4)}',
-                  style: Theme.of(context).textTheme.bodySmall,
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: _useCurrentLocation,
+                  icon: const Icon(Icons.my_location_rounded),
+                  label: const Text('Use my current location'),
                 ),
+                if (mapsEnabled)
+                  TextButton.icon(
+                    onPressed: _pickOnMap,
+                    icon: const Icon(Icons.map_outlined),
+                    label: Text(_pin == null ? 'Pick on map' : 'Move pin'),
+                  ),
+              ],
+            ),
+            if (_pin != null)
+              Row(
+                children: [
+                  const Icon(Icons.place_rounded, size: 18),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Pinned at ${_pin!.latitude.toStringAsFixed(4)}, ${_pin!.longitude.toStringAsFixed(4)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _pin = null),
+                    child: const Text('Remove pin'),
+                  ),
+                ],
               ),
             const SizedBox(height: 12),
             TextFormField(
@@ -961,8 +987,8 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         _locationController.text.trim().isEmpty
             ? _areaController.text.trim()
             : _locationController.text.trim(),
-        _latitude,
-        _longitude,
+        _pin?.latitude,
+        _pin?.longitude,
         _scheduledAt!,
         _uploadedImageUrls,
       );
@@ -976,42 +1002,26 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
     }
   }
 
+  void _setPin(LatLngPoint point, String defaultLabel) {
+    setState(() {
+      _pin = point;
+      if (_locationController.text.trim().isEmpty) {
+        _locationController.text = defaultLabel;
+      }
+      _error = null;
+    });
+  }
+
   Future<void> _useCurrentLocation() async {
     try {
-      final permission = await Geolocator.checkPermission();
-      final status = permission == LocationPermission.denied
-          ? await Geolocator.requestPermission()
-          : permission;
-      if (status == LocationPermission.denied ||
-          status == LocationPermission.deniedForever) {
-        throw StateError(
-          'Allow location access to pin your location, or type it instead.',
-        );
-      }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-        ),
-      );
-      setState(() {
-        _latitude = position.latitude;
-        _longitude = position.longitude;
-        _locationController.text = _locationController.text.trim().isEmpty
-            ? 'Current location'
-            : _locationController.text.trim();
-        _error = null;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = friendlyErrorMessage(
-          error,
-          'Could not access your current location. Type it instead.',
-        );
-      });
+      final here = await widget.location.requestCurrent();
+      if (mounted) _setPin(here, 'Current location');
+    } on LocationUnavailable catch (error) {
+      if (mounted) setState(() => _error = error.message);
     }
   }
 
+<<<<<<< HEAD
   Future<void> _pickPhotos() async {
     try {
       final picker = ImagePicker();
@@ -1032,6 +1042,16 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         );
       });
     }
+=======
+  Future<void> _pickOnMap() async {
+    final point = await pickLocationOnMap(
+      context,
+      location: widget.location,
+      initial: _pin,
+      title: 'Where is the job?',
+    );
+    if (point != null && mounted) _setPin(point, 'Pinned location');
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
   }
 
   Future<void> _chooseSchedule() async {
@@ -1075,7 +1095,7 @@ class _InlineMessage extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
       child: Column(
         children: [
-          Icon(icon, size: 30, color: AppTheme.textSecondary),
+          Icon(icon, size: 30, color: AppTheme.inkMuted),
           const SizedBox(height: 10),
           Text(message, textAlign: TextAlign.center),
         ],

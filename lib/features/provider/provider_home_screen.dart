@@ -3,12 +3,21 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
+import '../../core/services/location_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/push_notifications.dart';
+import '../../core/utils/feedback.dart';
+import '../../core/utils/geo.dart';
+import '../../core/utils/job_matching.dart';
+import '../notifications/notification_permission.dart';
+import 'provider_service_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
-import '../messaging/job_chat_sheet.dart';
+import '../jobs/job_detail_screen.dart';
+import '../jobs/provider_job_card.dart';
 
 class ProviderHomeScreen extends StatefulWidget {
   const ProviderHomeScreen({
@@ -17,7 +26,12 @@ class ProviderHomeScreen extends StatefulWidget {
     required this.repository,
     this.photoUrl,
     this.onSignOut,
+<<<<<<< HEAD
     this.onUpdateProfilePhoto,
+=======
+    this.push,
+    this.location = const GeolocatorLocationService(),
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
     super.key,
   });
 
@@ -65,10 +79,17 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
     }
   }
 
+  /// Used to ask for notification permission the first time the provider
+  /// goes online. Null in tests and when push isn't available.
+  final PushNotifications? push;
+
+  /// Device location, for setting the base location.
+  final LocationService location;
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: Row(
@@ -84,6 +105,7 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
             ],
           ),
           actions: [
+<<<<<<< HEAD
             if (widget.onUpdateProfilePhoto != null)
               IconButton(
                 tooltip: 'Update profile photo',
@@ -91,6 +113,14 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
                 icon: const Icon(Icons.photo_camera_outlined),
               ),
             if (widget.onSignOut != null)
+=======
+            _OnlineSwitch(
+              providerUid: providerUid,
+              repository: repository,
+              push: push,
+            ),
+            if (onSignOut != null)
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
               IconButton(
                 tooltip: 'Sign out',
                 onPressed: widget.onSignOut,
@@ -99,13 +129,15 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
           ],
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'Open requests'),
+              Tab(text: 'Job board'),
               Tab(text: 'My jobs'),
+              Tab(text: 'Service'),
             ],
           ),
         ),
         body: TabBarView(
           children: [
+<<<<<<< HEAD
             _RequestList(
               requests: widget.repository.watchOpenRequests(widget.providerUid),
               emptyMessage: 'No open requests nearby yet.',
@@ -155,34 +187,222 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
               onConfirmCashPayment: (request) =>
                   widget.repository.confirmCashPayment(request.id, widget.providerUid),
               showProgressActions: true,
+=======
+            _JobBoard(
+              repository: repository,
+              providerUid: providerUid,
+              actions: actions,
+              onOpenJob: (id) => _openJob(context, id),
+            ),
+            _JobList(
+              requests: repository.watchProviderJobs(providerUid),
+              emptyMessage: 'Accepted jobs will appear here.',
+              actions: actions,
+              onOpenJob: (id) => _openJob(context, id),
+              showEarnings: true,
+            ),
+            ProviderServiceSettings(
+              providerUid: providerUid,
+              repository: repository,
+              location: location,
+>>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
             ),
           ],
         ),
       ),
     );
   }
+
+  ProviderJobActions get actions => ProviderJobActions(
+    repository: repository,
+    providerUid: providerUid,
+    providerName: providerName,
+  );
+
+  void _openJob(BuildContext context, String requestId) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => JobDetailScreen(
+          requestId: requestId,
+          viewerUid: providerUid,
+          viewerName: providerName,
+          viewerRole: UserRole.provider,
+          repository: repository,
+        ),
+      ),
+    );
+  }
 }
 
-class _RequestList extends StatelessWidget {
-  const _RequestList({
+/// Takes the provider online (visible to customers, sent new jobs) or
+/// offline. Going online is when we first ask for notification permission.
+class _OnlineSwitch extends StatelessWidget {
+  const _OnlineSwitch({
+    required this.providerUid,
+    required this.repository,
+    required this.push,
+  });
+
+  final String providerUid;
+  final MarketplaceRepository repository;
+  final PushNotifications? push;
+
+  Future<void> _set(BuildContext context, bool online) async {
+    await runWithFeedback(
+      context,
+      () => repository.setProviderAvailability(providerUid, online),
+      failureMessage: online
+          ? 'Could not go online. Try again.'
+          : 'Could not go offline. Try again.',
+      successMessage: online ? 'You are online.' : 'You are offline.',
+    );
+    final push = this.push;
+    if (online && push != null && context.mounted) {
+      await askForNotificationsIfUseful(
+        context: context,
+        push: push,
+        uid: providerUid,
+        title: 'Get new jobs as they come in?',
+        reason:
+            'Turn on notifications to hear about jobs posted near you, '
+            'jobs sent directly to you, and when customers accept your quote '
+            'or send a message.',
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ProviderProfile?>(
+      stream: repository.watchProviderProfile(providerUid),
+      builder: (context, snapshot) {
+        final profile = snapshot.data;
+        final online = profile?.isAvailable ?? false;
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              online ? 'Online' : 'Offline',
+              style: Theme.of(context).textTheme.labelLarge,
+            ),
+            Switch(
+              value: online,
+              onChanged: profile == null
+                  ? null
+                  : (value) => _set(context, value),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+/// Open jobs for this provider: sent to them first, then within their
+/// radius by distance, then older jobs without coordinates.
+class _JobBoard extends StatelessWidget {
+  const _JobBoard({
+    required this.repository,
+    required this.providerUid,
+    required this.actions,
+    required this.onOpenJob,
+  });
+
+  final MarketplaceRepository repository;
+  final String providerUid;
+  final ProviderJobActions actions;
+  final void Function(String requestId) onOpenJob;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ProviderProfile?>(
+      stream: repository.watchProviderProfile(providerUid),
+      builder: (context, profileSnapshot) {
+        return StreamBuilder<List<ServiceRequest>>(
+          stream: repository.watchOpenRequests(providerUid),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const _EmptyState(
+                icon: Icons.cloud_off_outlined,
+                message: 'Could not load jobs. Check your connection.',
+              );
+            }
+            if (snapshot.connectionState == ConnectionState.waiting ||
+                profileSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final profile = profileSnapshot.data;
+            final board = buildJobBoard(
+              jobs: snapshot.data ?? const [],
+              providerUid: providerUid,
+              profile: profile,
+            );
+            final noBase = profile != null && profile.baseLocation == null;
+            final radius = (profile?.serviceRadiusKm ?? defaultServiceRadiusKm)
+                .round();
+
+            return ContentWidth(
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (noBase) ...[
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.near_me_outlined),
+                        title: const Text('Set your base location'),
+                        subtitle: const Text(
+                          'Then you only see jobs within your radius, '
+                          'nearest first.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () =>
+                            DefaultTabController.of(context).animateTo(2),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (board.isEmpty)
+                    _EmptyState(
+                      icon: Icons.inbox_outlined,
+                      message: noBase || profile == null
+                          ? 'No open jobs yet.'
+                          : 'No open jobs within $radius km yet.',
+                    ),
+                  for (final entry in board) ...[
+                    ProviderJobCard(
+                      request: entry.request,
+                      actions: actions,
+                      onOpenDetails: () => onOpenJob(entry.request.id),
+                      distanceLabel: entry.distanceKm == null
+                          ? null
+                          : formatDistance(entry.distanceKm!),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _JobList extends StatelessWidget {
+  const _JobList({
     required this.requests,
     required this.emptyMessage,
-    required this.actionLabel,
-    required this.onAction,
-    this.onDecline,
-    this.onOpenChat,
-    this.onConfirmCashPayment,
-    this.showProgressActions = false,
+    required this.actions,
+    required this.onOpenJob,
+    this.showEarnings = false,
   });
 
   final Stream<List<ServiceRequest>> requests;
   final String emptyMessage;
-  final String? actionLabel;
-  final Future<void> Function(ServiceRequest request) onAction;
-  final Future<void> Function(ServiceRequest request)? onDecline;
-  final Future<void> Function(ServiceRequest request)? onOpenChat;
-  final Future<void> Function(ServiceRequest request)? onConfirmCashPayment;
-  final bool showProgressActions;
+  final ProviderJobActions actions;
+  final void Function(String requestId) onOpenJob;
+  final bool showEarnings;
 
   @override
   Widget build(BuildContext context) {
@@ -200,7 +420,7 @@ class _RequestList extends StatelessWidget {
         }
 
         final items = snapshot.data ?? const <ServiceRequest>[];
-        if (items.isEmpty && !showProgressActions) {
+        if (items.isEmpty && !showEarnings) {
           return _EmptyState(icon: Icons.inbox_outlined, message: emptyMessage);
         }
 
@@ -208,14 +428,18 @@ class _RequestList extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(16),
             children: [
-              if (showProgressActions) ...[
+              if (showEarnings) ...[
                 _EarningsCard(jobs: items),
                 const SizedBox(height: 12),
               ],
               if (items.isEmpty)
                 _EmptyState(icon: Icons.work_outline, message: emptyMessage),
               for (final request in items) ...[
-                _buildRequestCard(context, request),
+                ProviderJobCard(
+                  request: request,
+                  actions: actions,
+                  onOpenDetails: () => onOpenJob(request.id),
+                ),
                 const SizedBox(height: 12),
               ],
             ],
@@ -223,144 +447,6 @@ class _RequestList extends StatelessWidget {
         );
       },
     );
-  }
-
-  Widget _buildRequestCard(BuildContext context, ServiceRequest request) {
-    final progressLabel = switch (request.status) {
-      RequestStatus.accepted => 'On the way',
-      RequestStatus.onTheWay => 'Mark arrived',
-      RequestStatus.arrived => 'Start job',
-      RequestStatus.inProgress => 'Mark provider complete',
-      _ => null,
-    };
-    final label = showProgressActions ? progressLabel : actionLabel;
-    final textTheme = Theme.of(context).textTheme;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(request.category, style: textTheme.titleMedium),
-                ),
-                StatusChip(status: request.status),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(request.description),
-            const SizedBox(height: 8),
-            Text(
-              '${request.serviceArea} · ${showProgressActions ? request.customerName : 'Requested by ${request.customerName}'}',
-              style: textTheme.bodySmall,
-            ),
-            if (request.scheduledAt != null)
-              Text(
-                'Scheduled: ${formatDateTime(request.scheduledAt!)}',
-                style: textTheme.bodySmall,
-              ),
-            if (request.quotedPrice != null)
-              Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
-            if (onOpenChat != null &&
-                request.status != RequestStatus.requested &&
-                request.status != RequestStatus.quoted)
-              TextButton.icon(
-                onPressed: () => onOpenChat!(request),
-                icon: const Icon(Icons.chat_bubble_outline_rounded),
-                label: const Text('Chat'),
-              ),
-            if (request.status == RequestStatus.completed &&
-                request.paymentStatus == 'pending_provider_confirmation' &&
-                onConfirmCashPayment != null)
-              Align(
-                alignment: Alignment.centerRight,
-                child: FilledButton.icon(
-                  onPressed: () => _runPaymentConfirmation(context, request),
-                  icon: const Icon(Icons.payments_outlined),
-                  label: const Text('Confirm cash received'),
-                ),
-              ),
-            if (request.paymentStatus == 'paid')
-              Text(
-                'Payment received',
-                style: textTheme.bodySmall?.copyWith(
-                  color: AppTheme.successGreen,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            if (label != null) ...[
-              const SizedBox(height: 12),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  if (onDecline != null)
-                    TextButton(
-                      onPressed: () => _runDecline(context, request),
-                      child: const Text('Decline'),
-                    ),
-                  const SizedBox(width: 8),
-                  FilledButton(
-                    onPressed: () => _runAction(context, request),
-                    child: Text(label),
-                  ),
-                ],
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<void> _runAction(BuildContext context, ServiceRequest request) async {
-    try {
-      await onAction(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not update the request.'),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _runDecline(BuildContext context, ServiceRequest request) async {
-    try {
-      await onDecline!(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not decline the request.'),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _runPaymentConfirmation(
-    BuildContext context,
-    ServiceRequest request,
-  ) async {
-    try {
-      await onConfirmCashPayment!(request);
-    } catch (error) {
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(error, 'Could not confirm payment.'),
-          ),
-        ),
-      );
-    }
   }
 }
 
@@ -414,94 +500,11 @@ class _EmptyState extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 32, color: AppTheme.textSecondary),
+          Icon(icon, size: 32, color: AppTheme.inkMuted),
           const SizedBox(height: 10),
           Text(message, textAlign: TextAlign.center),
         ],
       ),
-    );
-  }
-}
-
-class _QuoteSubmission {
-  const _QuoteSubmission(this.price, this.note);
-
-  final int price;
-  final String note;
-}
-
-class _QuoteDialog extends StatefulWidget {
-  const _QuoteDialog();
-
-  @override
-  State<_QuoteDialog> createState() => _QuoteDialogState();
-}
-
-class _QuoteDialogState extends State<_QuoteDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _priceController = TextEditingController();
-  final _noteController = TextEditingController();
-
-  @override
-  void dispose() {
-    _priceController.dispose();
-    _noteController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Send quote'),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextFormField(
-              controller: _priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Price (PHP)'),
-              validator: (value) {
-                final price = int.tryParse(value?.trim() ?? '');
-                return price == null || price < 1
-                    ? 'Enter a valid price'
-                    : null;
-              },
-            ),
-            TextFormField(
-              controller: _noteController,
-              minLines: 1,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Message to customer',
-              ),
-              validator: (value) => value == null || value.trim().isEmpty
-                  ? 'Add a short note'
-                  : null,
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(
-              context,
-              _QuoteSubmission(
-                int.parse(_priceController.text.trim()),
-                _noteController.text.trim(),
-              ),
-            );
-          },
-          child: const Text('Send quote'),
-        ),
-      ],
     );
   }
 }

@@ -4,33 +4,51 @@ import '../models/marketplace_models.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 
-/// A compact, color-coded pill describing a service request's status.
+/// A compact pill describing a service request's status.
+///
+/// When [needsYou] is true the chip turns yellow, the one place the app uses
+/// [AppTheme.attention]: the job is waiting on the person looking at it.
 class StatusChip extends StatelessWidget {
-  const StatusChip({required this.status, super.key});
+  const StatusChip({required this.status, this.needsYou = false, super.key});
 
   final String status;
+  final bool needsYou;
 
   @override
   Widget build(BuildContext context) {
-    final color = switch (status) {
-      RequestStatus.requested || RequestStatus.quoted => AppTheme.primaryBlue,
-      RequestStatus.completed => AppTheme.successGreen,
-      RequestStatus.providerCompleted => const Color(0xFFB7791F),
-      RequestStatus.cancelled => AppTheme.textSecondary,
-      _ => const Color(0xFF6B4FD8),
-    };
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        requestStatusLabel(status),
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: color,
+    final (background, foreground) = needsYou
+        ? (AppTheme.attention, AppTheme.ink)
+        : switch (status) {
+            RequestStatus.completed => (AppTheme.successTint, AppTheme.success),
+            RequestStatus.cancelled => (AppTheme.tint, AppTheme.inkMuted),
+            _ => (AppTheme.tint, AppTheme.ink),
+          };
+    final label = requestStatusLabel(status);
+    return Semantics(
+      label: needsYou ? '$label, needs your action' : label,
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: background,
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (needsYou) ...[
+              Icon(Icons.priority_high_rounded, size: 14, color: foreground),
+              const SizedBox(width: 2),
+            ],
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: foreground,
+              ),
+            ),
+          ],
         ),
       ),
     );
