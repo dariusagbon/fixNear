@@ -118,6 +118,30 @@ void main() {
       expect(listing['photoUrl'], photo);
     });
 
+    test('rejects an empty name', () async {
+      await expectLater(
+        () => auth.updateProfile(uid: 'p1', name: '   '),
+        throwsArgumentError,
+      );
+    });
+
+    test('clears a removed photo and phone', () async {
+      await auth.updateProfile(
+        uid: 'p1',
+        name: 'Pat',
+        phone: '0917',
+        photoUrl: 'https://res.cloudinary.com/demo/image/upload/v1/p.jpg',
+        isProvider: true,
+      );
+      await auth.updateProfile(uid: 'p1', name: 'Pat', isProvider: true);
+      final user = (await firestore.doc('users/p1').get()).data()!;
+      final listing = (await firestore.doc('providerProfiles/p1').get())
+          .data()!;
+      expect(user['photoUrl'], isNull);
+      expect(user['phone'], isNull);
+      expect(listing['photoUrl'], isNull);
+    });
+
     test('customers only update their own profile', () async {
       await auth.updateProfile(uid: 'p1', name: 'Pat', photoUrl: null);
       final listing = (await firestore.doc('providerProfiles/p1').get())

@@ -124,10 +124,12 @@ class AuthService {
     String? photoUrl,
     bool isProvider = false,
   }) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) throw ArgumentError('Name is required.');
     final trimmedPhone = phone?.trim();
     final batch = _firestore.batch()
       ..update(_firestore.collection('users').doc(uid), {
-        'name': name.trim(),
+        'name': trimmedName,
         'phone': trimmedPhone == null || trimmedPhone.isEmpty
             ? null
             : trimmedPhone,
@@ -135,7 +137,7 @@ class AuthService {
       });
     if (isProvider) {
       batch.update(_firestore.collection('providerProfiles').doc(uid), {
-        'name': name.trim(),
+        'name': trimmedName,
         'photoUrl': photoUrl,
       });
     }
