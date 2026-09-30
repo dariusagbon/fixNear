@@ -101,6 +101,78 @@ class AuthService {
     return photoUrl;
   }
 
+  Future<AppUser?> ensureUserProfileExists(User user) async {
+    final existing = await getUserProfile(user.uid);
+    if (existing != null) {
+      return existing;
+    }
+
+    final providerSnapshot = await _firestore
+        .collection('providerProfiles')
+        .doc(user.uid)
+        .get();
+    final providerData = providerSnapshot.data();
+    final fallbackName =
+        (providerData?['name'] as String?) ??
+        user.displayName?.trim() ??
+        'FixNear User';
+    final role = providerData != null ? UserRole.provider : UserRole.customer;
+
+    final profile = AppUser(
+      id: user.uid,
+      email: user.email ?? '',
+      name: fallbackName,
+      role: role,
+      createdAt: DateTime.now(),
+    );
+
+    await _firestore.collection('users').doc(user.uid).set(
+      profile.toMap(),
+      SetOptions(merge: true),
+    );
+
+    if (providerData != null) {
+      await _firestore.collection('providerProfiles').doc(user.uid).set(
+        {
+          'name': fallbackName,
+          'photoUrl': profile.photoUrl,
+        },
+        SetOptions(merge: true),
+      );
+    }
+
+    return profile;
+  }
+
+  Future<void> updateProfile({
+    required String uid,
+    required String name,
+    String? phone,
+    String? photoUrl,
+  }) async {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError('Name is required.');
+    }
+
+    final updates = {
+      'name': trimmedName,
+      'phone': phone?.trim().isEmpty ?? true ? null : phone?.trim(),
+      'photoUrl': photoUrl,
+    }..removeWhere((_, value) => value == null);
+
+    await _firestore.collection('users').doc(uid).update(updates);
+
+    final providerRef = _firestore.collection('providerProfiles').doc(uid);
+    final providerDoc = await providerRef.get();
+    if (providerDoc.exists) {
+      await providerRef.update({
+        'name': trimmedName,
+        if (photoUrl != null) 'photoUrl': photoUrl,
+      });
+    }
+  }
+
   Future<void> signOut() async {
     await _auth.signOut();
   }

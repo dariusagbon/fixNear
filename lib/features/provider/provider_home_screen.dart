@@ -26,12 +26,9 @@ class ProviderHomeScreen extends StatefulWidget {
     required this.repository,
     this.photoUrl,
     this.onSignOut,
-<<<<<<< HEAD
     this.onUpdateProfilePhoto,
-=======
     this.push,
     this.location = const GeolocatorLocationService(),
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
     super.key,
   });
 
@@ -41,7 +38,14 @@ class ProviderHomeScreen extends StatefulWidget {
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
   final Future<String> Function(Uint8List bytes, String fileName)?
-  onUpdateProfilePhoto;
+      onUpdateProfilePhoto;
+
+  /// Used to ask for notification permission the first time the provider
+  /// goes online. Null in tests and when push isn't available.
+  final PushNotifications? push;
+
+  /// Device location, for setting the base location.
+  final LocationService location;
 
   @override
   State<ProviderHomeScreen> createState() => _ProviderHomeScreenState();
@@ -79,13 +83,6 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
     }
   }
 
-  /// Used to ask for notification permission the first time the provider
-  /// goes online. Null in tests and when push isn't available.
-  final PushNotifications? push;
-
-  /// Device location, for setting the base location.
-  final LocationService location;
-
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
@@ -105,22 +102,18 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
             ],
           ),
           actions: [
-<<<<<<< HEAD
             if (widget.onUpdateProfilePhoto != null)
               IconButton(
                 tooltip: 'Update profile photo',
                 onPressed: _uploadProfilePhoto,
                 icon: const Icon(Icons.photo_camera_outlined),
               ),
-            if (widget.onSignOut != null)
-=======
             _OnlineSwitch(
-              providerUid: providerUid,
-              repository: repository,
-              push: push,
+              providerUid: widget.providerUid,
+              repository: widget.repository,
+              push: widget.push,
             ),
-            if (onSignOut != null)
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
+            if (widget.onSignOut != null)
               IconButton(
                 tooltip: 'Sign out',
                 onPressed: widget.onSignOut,
@@ -137,75 +130,23 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ),
         body: TabBarView(
           children: [
-<<<<<<< HEAD
-            _RequestList(
-              requests: widget.repository.watchOpenRequests(widget.providerUid),
-              emptyMessage: 'No open requests nearby yet.',
-              actionLabel: 'Send quote',
-              onAction: (request) async {
-                final quote = await showDialog<_QuoteSubmission>(
-                  context: context,
-                  builder: (_) => const _QuoteDialog(),
-                );
-                if (quote == null) return;
-                await widget.repository.sendQuote(
-                  requestId: request.id,
-                  providerUid: widget.providerUid,
-                  providerName: widget.providerName,
-                  price: quote.price,
-                  note: quote.note,
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Quote sent.')));
-              },
-              onDecline: (request) =>
-                  widget.repository.declineRequest(request.id, widget.providerUid),
-            ),
-            _RequestList(
-              requests: widget.repository.watchProviderJobs(widget.providerUid),
-              emptyMessage: 'Accepted jobs will appear here.',
-              actionLabel: null,
-              onAction: (request) {
-                final nextStatus = switch (request.status) {
-                  RequestStatus.accepted => RequestStatus.onTheWay,
-                  RequestStatus.onTheWay => RequestStatus.arrived,
-                  RequestStatus.arrived => RequestStatus.inProgress,
-                  RequestStatus.inProgress => RequestStatus.providerCompleted,
-                  _ => null,
-                };
-                if (nextStatus == null) return Future.value();
-                return widget.repository.advanceRequest(request.id, nextStatus);
-              },
-              onOpenChat: (request) => showJobChatSheet(
-                context: context,
-                requestId: request.id,
-                currentUid: widget.providerUid,
-                currentName: widget.providerName,
-                repository: widget.repository,
-              ),
-              onConfirmCashPayment: (request) =>
-                  widget.repository.confirmCashPayment(request.id, widget.providerUid),
-              showProgressActions: true,
-=======
             _JobBoard(
-              repository: repository,
-              providerUid: providerUid,
-              actions: actions,
+              repository: widget.repository,
+              providerUid: widget.providerUid,
+              actions: _actions,
               onOpenJob: (id) => _openJob(context, id),
             ),
             _JobList(
-              requests: repository.watchProviderJobs(providerUid),
+              requests: widget.repository.watchProviderJobs(widget.providerUid),
               emptyMessage: 'Accepted jobs will appear here.',
-              actions: actions,
+              actions: _actions,
               onOpenJob: (id) => _openJob(context, id),
               showEarnings: true,
             ),
             ProviderServiceSettings(
-              providerUid: providerUid,
-              repository: repository,
-              location: location,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
+              providerUid: widget.providerUid,
+              repository: widget.repository,
+              location: widget.location,
             ),
           ],
         ),
@@ -213,10 +154,10 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
     );
   }
 
-  ProviderJobActions get actions => ProviderJobActions(
-    repository: repository,
-    providerUid: providerUid,
-    providerName: providerName,
+  ProviderJobActions get _actions => ProviderJobActions(
+    repository: widget.repository,
+    providerUid: widget.providerUid,
+    providerName: widget.providerName,
   );
 
   void _openJob(BuildContext context, String requestId) {
@@ -224,10 +165,10 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
       MaterialPageRoute<void>(
         builder: (_) => JobDetailScreen(
           requestId: requestId,
-          viewerUid: providerUid,
-          viewerName: providerName,
+          viewerUid: widget.providerUid,
+          viewerName: widget.providerName,
           viewerRole: UserRole.provider,
-          repository: repository,
+          repository: widget.repository,
         ),
       ),
     );

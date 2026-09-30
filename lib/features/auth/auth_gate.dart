@@ -95,12 +95,15 @@ class _AuthGateState extends State<AuthGate> {
                       customerName: recoverySnapshot.data!.name,
                       photoUrl: recoverySnapshot.data!.photoUrl,
                       repository: _marketplace,
-                      onSignOut: _authService.signOut,
-                      onUpdateProfilePhoto: (bytes, fileName) =>
-                          _authService.updateProfilePhoto(
+                      onSignOut: () => _signOut(recoverySnapshot.data!.id),
+                      profile: recoverySnapshot.data!,
+                      imageUploader: _imageUploader,
+                      onSaveProfile: ({required name, phone, photoUrl}) =>
+                          _authService.updateProfile(
                             uid: recoverySnapshot.data!.id,
-                            bytes: bytes,
-                            fileName: fileName,
+                            name: name,
+                            phone: phone,
+                            photoUrl: photoUrl,
                           ),
                     ),
                     UserRole.provider => ProviderHomeScreen(
@@ -108,7 +111,8 @@ class _AuthGateState extends State<AuthGate> {
                       providerName: recoverySnapshot.data!.name,
                       photoUrl: recoverySnapshot.data!.photoUrl,
                       repository: _marketplace,
-                      onSignOut: _authService.signOut,
+                      onSignOut: () => _signOut(recoverySnapshot.data!.id),
+                      push: _push,
                       onUpdateProfilePhoto: (bytes, fileName) =>
                           _authService.updateProfilePhoto(
                             uid: recoverySnapshot.data!.id,
@@ -127,14 +131,6 @@ class _AuthGateState extends State<AuthGate> {
                 customerName: profile.name,
                 photoUrl: profile.photoUrl,
                 repository: _marketplace,
-<<<<<<< HEAD
-                onSignOut: _authService.signOut,
-                onUpdateProfilePhoto: (bytes, fileName) =>
-                    _authService.updateProfilePhoto(
-                      uid: profile.id,
-                      bytes: bytes,
-                      fileName: fileName,
-=======
                 onSignOut: () => _signOut(profile.id),
                 profile: profile,
                 imageUploader: _imageUploader,
@@ -145,7 +141,6 @@ class _AuthGateState extends State<AuthGate> {
                       name: name,
                       phone: phone,
                       photoUrl: photoUrl,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
                     ),
               ),
               UserRole.provider => ProviderHomeScreen(
@@ -153,18 +148,14 @@ class _AuthGateState extends State<AuthGate> {
                 providerName: profile.name,
                 photoUrl: profile.photoUrl,
                 repository: _marketplace,
-<<<<<<< HEAD
-                onSignOut: _authService.signOut,
+                onSignOut: () => _signOut(profile.id),
+                push: _push,
                 onUpdateProfilePhoto: (bytes, fileName) =>
                     _authService.updateProfilePhoto(
                       uid: profile.id,
                       bytes: bytes,
                       fileName: fileName,
                     ),
-=======
-                onSignOut: () => _signOut(profile.id),
-                push: _push,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
               ),
             };
             return NotificationHost(
