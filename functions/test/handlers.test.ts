@@ -12,6 +12,7 @@ import {
   handleJobUpdated,
   handleMessageCreated,
   handleQuoteWritten,
+  handleUserDeleted,
 } from '../src/handlers';
 
 class FakeMessaging implements MessagingLike {
@@ -213,6 +214,39 @@ describe('handlers', () => {
     assert.deepEqual(messaging.tokens(), [['far-phone']]);
   });
 
+  it('cleans up after a deleted account', async () => {
+    // "near" deletes their account: they have a listing, tokens, an open
+    // quote, and a finished job.
+    await db.doc('users/near').set({ name: 'Near Provider', role: 'provider' });
+    await db.doc('serviceRequests/open-1').set({ ...JOB, status: 'quoted' });
+    await db.doc('serviceRequests/open-1/quotes/near').set({ providerUid: 'near', price: 900, status: 'sent' });
+    await db.doc('serviceRequests/done-1').set({
+      ...JOB, status: 'completed', providerUid: 'near', providerName: 'Near Provider',
+    });
+
+    const result = await handleUserDeleted(ctx, 'near');
+    assert.equal(result.tokens, 2);
+    assert.equal(result.quotesWithdrawn, 1);
+    assert.equal((await db.doc('users/near').get()).exists, false);
+    assert.equal((await db.doc('providerProfiles/near').get()).exists, false);
+    assert.equal((await db.collection('users/near/tokens').get()).size, 0);
+    assert.equal((await db.doc('serviceRequests/open-1/quotes/near').get()).data()?.status, 'withdrawn');
+    assert.equal((await db.doc('serviceRequests/done-1').get()).data()?.providerName, 'Deleted provider');
+  });
+
+  it('cancels a deleted customer’s open jobs and keeps finished ones', async () => {
+    await db.doc('serviceRequests/c-open').set({ ...JOB, status: 'requested' });
+    await db.doc('serviceRequests/c-done').set({ ...JOB, status: 'completed', providerUid: 'near' });
+    await handleUserDeleted(ctx, 'customer-1');
+    const open = (await db.doc('serviceRequests/c-open').get()).data();
+    const done = (await db.doc('serviceRequests/c-done').get()).data();
+    assert.equal(open?.status, 'cancelled');
+    assert.equal(open?.cancelledBy, 'system');
+    assert.equal(open?.customerName, 'Deleted user');
+    assert.equal(done?.status, 'completed');
+    assert.equal(done?.customerName, 'Deleted user');
+  });
+
   it('does nothing for a quote on a job that no longer exists', async () => {
     const result = await handleQuoteWritten(ctx, 'missing', undefined, { status: 'sent', providerUid: 'near' });
     assert.equal(result.sent, 0);
@@ -229,7 +263,7 @@ describe('deployment settings', () => {
     );
     assert.deepEqual(
       exported.map(([name]) => name).sort(),
-      ['notifyJobPosted', 'notifyJobUpdated', 'notifyMessageSent', 'notifyQuoteWritten'],
+      ['cleanUpDeletedUser', 'notifyJobPosted', 'notifyJobUpdated', 'notifyMessageSent', 'notifyQuoteWritten'],
     );
     for (const [name, fn] of exported) {
       const endpoint = (fn as { __endpoint: { region?: string[] } }).__endpoint;

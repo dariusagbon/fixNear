@@ -75,7 +75,8 @@ service cloud.firestore {
             && request.resource.data.phone.size() <= 20))
         && validPhotoUrl(request.resource.data);
 
-      allow delete: if false;
+      // Account deletion (the app then deletes the login).
+      allow delete: if request.auth != null && request.auth.uid == userId;
 
       // Push tokens for this user's devices. Only Cloud Functions (admin)
       // read them to send notifications; the app writes and removes its own.
@@ -121,7 +122,7 @@ service cloud.firestore {
         && validProviderLocation(request.resource.data)
         && validPhotoUrl(request.resource.data);
 
-      allow delete: if false;
+      allow delete: if request.auth != null && request.auth.uid == providerId;
     }
 
     match /serviceRequests/{requestId} {

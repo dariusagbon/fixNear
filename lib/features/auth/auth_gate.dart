@@ -10,6 +10,7 @@ import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
 import '../customer/customer_marketplace_screen.dart';
 import '../notifications/notification_host.dart';
+import '../profile/edit_profile_screen.dart';
 import '../provider/provider_home_screen.dart';
 
 class AuthGate extends StatefulWidget {
@@ -95,6 +96,17 @@ class _AuthGateState extends State<AuthGate> {
               isProvider: profile.role == UserRole.provider,
             );
 
+            final account = AccountControls(
+              emailVerified: _authService.isEmailVerified,
+              sendVerificationEmail: _authService.sendEmailVerification,
+              deleteAccount: (password) => _authService.deleteAccount(
+                profile: profile,
+                password: password,
+                // Still signed in here, so the rules allow removing it.
+                beforeDelete: () => _push.unregisterDevice(profile.id),
+              ),
+            );
+
             final home = switch (profile.role) {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
@@ -105,6 +117,7 @@ class _AuthGateState extends State<AuthGate> {
                 imageUploader: _imageUploader,
                 push: _push,
                 onSaveProfile: saveProfile,
+                account: account,
               ),
               UserRole.provider => ProviderHomeScreen(
                 providerUid: profile.id,
@@ -115,6 +128,7 @@ class _AuthGateState extends State<AuthGate> {
                 profile: profile,
                 imageUploader: _imageUploader,
                 onSaveProfile: saveProfile,
+                account: account,
               ),
             };
             return NotificationHost(
@@ -190,6 +204,11 @@ class _LoginScreenState extends State<LoginScreen> {
               ? int.tryParse(_startingPriceController.text.trim())
               : null,
         );
+        // Best effort: the account works either way; the profile screen
+        // offers to resend.
+        try {
+          await auth.sendEmailVerification();
+        } catch (_) {}
       } else {
         await auth.signInWithEmailAndPassword(
           email: _emailController.text.trim(),
@@ -380,6 +399,14 @@ class _LoginScreenState extends State<LoginScreen> {
                           ? null
                           : 'Password must be at least 6 characters',
                     ),
+                    if (!_isRegistering)
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton(
+                          onPressed: _isSubmitting ? null : _forgotPassword,
+                          child: const Text('Forgot password?'),
+                        ),
+                      ),
                     if (_errorMessage != null) ...[
                       const SizedBox(height: 14),
                       Text(
@@ -424,6 +451,38 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _forgotPassword() async {
+    final email = await showDialog<String>(
+      context: context,
+      builder: (context) =>
+          _ForgotPasswordDialog(initialEmail: _emailController.text.trim()),
+    );
+    if (email == null || !mounted) return;
+    final auth = widget.authService ?? AuthService();
+    try {
+      await auth.sendPasswordReset(email);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'If an account exists for $email, a reset link is on its way.',
+          ),
+        ),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(_authErrorMessage(error.code))));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not send the reset link. Try again.'),
+        ),
+      );
+    }
+  }
+
   String _authErrorMessage(String code) {
     return switch (code) {
       'invalid-email' => 'Enter a valid email address.',
@@ -441,6 +500,68 @@ class _LoginScreenState extends State<LoginScreen> {
         'Check your internet connection and try again.',
       _ => 'Authentication failed. Please try again.',
     };
+  }
+}
+
+class _ForgotPasswordDialog extends StatefulWidget {
+  const _ForgotPasswordDialog({required this.initialEmail});
+
+  final String initialEmail;
+
+  @override
+  State<_ForgotPasswordDialog> createState() => _ForgotPasswordDialogState();
+}
+
+class _ForgotPasswordDialogState extends State<_ForgotPasswordDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final _controller = TextEditingController(text: widget.initialEmail);
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reset your password'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text('We will email you a link to choose a new password.'),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: TextInputType.emailAddress,
+              autocorrect: false,
+              decoration: const InputDecoration(labelText: 'Email'),
+              validator: (value) => (value?.trim() ?? '').contains('@')
+                  ? null
+                  : 'Enter a valid email',
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () {
+            if (_formKey.currentState!.validate()) {
+              Navigator.pop(context, _controller.text.trim());
+            }
+          },
+          child: const Text('Send link'),
+        ),
+      ],
+    );
   }
 }
 

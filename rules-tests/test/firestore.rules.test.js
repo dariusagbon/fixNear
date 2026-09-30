@@ -176,6 +176,25 @@ describe('push tokens', () => {
   });
 });
 
+describe('account deletion', () => {
+  it('lets users delete only their own profile and provider listing', async () => {
+    await assertFails(deleteDoc(doc(dbAs(env, OTHER_CUSTOMER), `users/${CUSTOMER}`)));
+    await assertSucceeds(deleteDoc(doc(dbAs(env, CUSTOMER), `users/${CUSTOMER}`)));
+    await assertFails(deleteDoc(doc(dbAs(env, OTHER_PROVIDER), `providerProfiles/${PROVIDER}`)));
+    await assertSucceeds(deleteDoc(doc(dbAs(env, PROVIDER), `providerProfiles/${PROVIDER}`)));
+  });
+
+  it('lets a leaving customer cancel their open jobs with the app’s reason', async () => {
+    await seed(env, { [REQ]: storedRequest({ status: 'quoted' }) });
+    await assertSucceeds(updateDoc(doc(dbAs(env, CUSTOMER), REQ), {
+      status: 'cancelled',
+      cancelledBy: 'customer',
+      cancelReason: 'The customer deleted their account.',
+      updatedAt: serverTimestamp(),
+    }));
+  });
+});
+
 describe('providerProfiles', () => {
   it('lets a provider update their own listing', async () => {
     const db = dbAs(env, PROVIDER);

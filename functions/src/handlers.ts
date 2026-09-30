@@ -84,3 +84,51 @@ export async function handleMessageCreated(ctx: DeliveryContext, requestId: stri
   if (!job) return deliver(ctx, []);
   return deliver(ctx, noticesForMessage(requestId, job, message));
 }
+
+/**
+ * A login was deleted (from the app's Delete account, or the console).
+ * Removes what the app can't reach and anonymises the person on jobs that
+ * stay in the other side's history.
+ */
+export async function handleUserDeleted(ctx: DeliveryContext, uid: string) {
+  const db = ctx.db;
+  const user = db.collection('users').doc(uid);
+  const tokens = await user.collection('tokens').get();
+  await Promise.all(tokens.docs.map((doc) => doc.ref.delete()));
+  await user.delete();
+  await db.collection('providerProfiles').doc(uid).delete();
+
+  // Quotes that could otherwise still be accepted.
+  const quotes = await db.collectionGroup('quotes').where('providerUid', '==', uid).get();
+  await Promise.all(
+    quotes.docs
+      .filter((doc) => doc.data().status === 'sent')
+      .map((doc) => doc.ref.update({ status: 'withdrawn' })),
+  );
+
+  const requests = db.collection('serviceRequests');
+  const asCustomer = await requests.where('customerUid', '==', uid).get();
+  await Promise.all(
+    asCustomer.docs.map((doc) => {
+      const open = ['requested', 'quoted'].includes(String(doc.data().status));
+      return doc.ref.update({
+        customerName: 'Deleted user',
+        ...(open
+          ? {
+              status: 'cancelled',
+              cancelledBy: 'system',
+              cancelReason: 'The customer deleted their account.',
+            }
+          : {}),
+      });
+    }),
+  );
+  const asProvider = await requests.where('providerUid', '==', uid).get();
+  await Promise.all(asProvider.docs.map((doc) => doc.ref.update({ providerName: 'Deleted provider' })));
+
+  return {
+    tokens: tokens.size,
+    quotesWithdrawn: quotes.docs.filter((doc) => doc.data().status === 'sent').length,
+    jobsAnonymised: asCustomer.size + asProvider.size,
+  };
+}

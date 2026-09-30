@@ -4,6 +4,7 @@ import 'package:image_picker/image_picker.dart';
 
 import '../../core/models/app_user.dart';
 import '../../core/services/cloudinary_service.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/profile_avatar.dart';
 
@@ -54,12 +55,29 @@ Future<List<PickedPhoto>> pickPhotosWithImagePicker() async {
 /// Most photos a customer can attach to one job (also enforced by rules).
 const maxJobPhotos = 5;
 
+/// Account-level actions shown at the bottom of Edit profile.
+class AccountControls {
+  const AccountControls({
+    required this.emailVerified,
+    required this.sendVerificationEmail,
+    required this.deleteAccount,
+  });
+
+  final bool emailVerified;
+  final Future<void> Function() sendVerificationEmail;
+
+  /// Deletes the account after confirming [password]. Throws a
+  /// [StateError] with a user-facing message when it can't.
+  final Future<void> Function(String password) deleteAccount;
+}
+
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
     required this.profile,
     required this.uploader,
     required this.onSave,
     this.pickPhoto = pickPhotoWithImagePicker,
+    this.account,
     super.key,
   });
 
@@ -67,6 +85,9 @@ class EditProfileScreen extends StatefulWidget {
   final ImageUploader uploader;
   final ProfileSaver onSave;
   final PhotoPicker pickPhoto;
+
+  /// Email verification and account deletion. Hidden when null.
+  final AccountControls? account;
 
   @override
   State<EditProfileScreen> createState() => _EditProfileScreenState();
@@ -203,6 +224,14 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           )
                         : const Text('Save changes'),
                   ),
+                  if (widget.account != null) ...[
+                    const SizedBox(height: 32),
+                    const Divider(),
+                    _AccountSection(
+                      email: widget.profile.email,
+                      controls: widget.account!,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -320,5 +349,182 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+}
+
+class _AccountSection extends StatefulWidget {
+  const _AccountSection({required this.email, required this.controls});
+
+  final String email;
+  final AccountControls controls;
+
+  @override
+  State<_AccountSection> createState() => _AccountSectionState();
+}
+
+class _AccountSectionState extends State<_AccountSection> {
+  bool _sent = false;
+
+  Future<void> _sendVerification() async {
+    try {
+      await widget.controls.sendVerificationEmail();
+      if (mounted) setState(() => _sent = true);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            friendlyErrorMessage(error, 'Could not send the email. Try again.'),
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _delete() async {
+    final deleted = await showDialog<bool>(
+      context: context,
+      builder: (_) => _DeleteAccountDialog(controls: widget.controls),
+    );
+    if (deleted == true && mounted) {
+      // The account is gone; return to the sign-in screen.
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = Theme.of(context).textTheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        Text('Account', style: textTheme.titleMedium),
+        if (!widget.controls.emailVerified) ...[
+          const SizedBox(height: 8),
+          Text(
+            _sent
+                ? 'Verification email sent to ${widget.email}. Open the link, then come back.'
+                : 'Your email address is not verified yet.',
+            style: textTheme.bodyMedium,
+          ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: _sendVerification,
+              icon: const Icon(Icons.mark_email_read_outlined),
+              label: Text(_sent ? 'Send again' : 'Send verification email'),
+            ),
+          ),
+        ],
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppTheme.error,
+            side: const BorderSide(color: AppTheme.error),
+          ),
+          onPressed: _delete,
+          icon: const Icon(Icons.delete_forever_outlined),
+          label: const Text('Delete account'),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeleteAccountDialog extends StatefulWidget {
+  const _DeleteAccountDialog({required this.controls});
+
+  final AccountControls controls;
+
+  @override
+  State<_DeleteAccountDialog> createState() => _DeleteAccountDialogState();
+}
+
+class _DeleteAccountDialogState extends State<_DeleteAccountDialog> {
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _password.dispose();
+    super.dispose();
+  }
+
+  Future<void> _confirm() async {
+    if (_password.text.isEmpty) {
+      setState(() => _error = 'Enter your password to confirm.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await widget.controls.deleteAccount(_password.text);
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = friendlyErrorMessage(
+            error,
+            'Could not delete your account. Try again.',
+          );
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Delete your account?'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'This permanently deletes your profile and sign-in, cancels '
+            'your open requests and removes your provider listing. It '
+            "can't be undone. Past jobs stay in the other person's "
+            'history without your name.',
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _password,
+            obscureText: true,
+            enabled: !_busy,
+            decoration: const InputDecoration(labelText: 'Password'),
+            onSubmitted: (_) => _confirm(),
+          ),
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: const TextStyle(color: AppTheme.error)),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _busy ? null : () => Navigator.pop(context, false),
+          child: const Text('Keep account'),
+        ),
+        FilledButton(
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.error),
+          onPressed: _busy ? null : _confirm,
+          child: _busy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Delete account'),
+        ),
+      ],
+    );
   }
 }

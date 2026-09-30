@@ -148,6 +148,114 @@ class AuthService {
     await _auth.signOut();
   }
 
+  /// Emails a password reset link. Succeeds whether or not an account
+  /// exists, so the app never reveals which emails are registered.
+  Future<void> sendPasswordReset(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (error) {
+      if (error.code == 'user-not-found') return;
+      rethrow;
+    }
+  }
+
+  /// Emails a verification link to the signed-in user.
+  Future<void> sendEmailVerification() async {
+    await _auth.currentUser?.sendEmailVerification();
+  }
+
+  /// Refreshes and returns whether the signed-in user's email is verified.
+  Future<bool> reloadEmailVerified() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+    await user.reload();
+    return _auth.currentUser?.emailVerified ?? false;
+  }
+
+  bool get isEmailVerified => _auth.currentUser?.emailVerified ?? true;
+
+  /// Permanently deletes the signed-in account after confirming [password].
+  ///
+  /// Refuses while the user has an active job. Otherwise cancels their open
+  /// requests, removes their provider listing and profile, then the login.
+  /// A Cloud Function (cleanUpDeletedUser) removes what the app can't:
+  /// tokens on other devices, open quotes and names on past jobs.
+  Future<void> deleteAccount({
+    required AppUser profile,
+    required String password,
+    Future<void> Function()? beforeDelete,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null || user.uid != profile.id) {
+      throw StateError('Sign in again to delete your account.');
+    }
+    try {
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(
+          email: user.email ?? profile.email,
+          password: password,
+        ),
+      );
+    } on FirebaseAuthException catch (error) {
+      if (const [
+        'wrong-password',
+        'invalid-credential',
+        'user-mismatch',
+      ].contains(error.code)) {
+        throw StateError('That password is incorrect.');
+      }
+      rethrow;
+    }
+    await beforeDelete?.call();
+    await deleteUserData(profile);
+    await user.delete();
+  }
+
+  static const _activeStatuses = [
+    'accepted',
+    'on_the_way',
+    'arrived',
+    'in_progress',
+    'provider_completed',
+  ];
+
+  /// The Firestore part of [deleteAccount], separate so it can be tested.
+  Future<void> deleteUserData(AppUser profile) async {
+    final requests = _firestore.collection('serviceRequests');
+    final mine = await requests
+        .where(
+          profile.role == UserRole.provider ? 'providerUid' : 'customerUid',
+          isEqualTo: profile.id,
+        )
+        .get();
+    final active = mine.docs.where((doc) {
+      final data = doc.data();
+      return _activeStatuses.contains(data['status']) ||
+          (data['status'] == 'completed' && data['paymentStatus'] != 'paid');
+    });
+    if (active.isNotEmpty) {
+      throw StateError(
+        'Finish or cancel your active jobs before deleting your account.',
+      );
+    }
+
+    if (profile.role == UserRole.customer) {
+      for (final doc in mine.docs) {
+        if (const ['requested', 'quoted'].contains(doc.data()['status'])) {
+          await doc.reference.update({
+            'status': 'cancelled',
+            'cancelledBy': 'customer',
+            'cancelReason': 'The customer deleted their account.',
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+    } else {
+      await _firestore.collection('providerProfiles').doc(profile.id).delete();
+    }
+    await _firestore.collection('users').doc(profile.id).delete();
+  }
+
   Future<AppUser?> getUserProfile(String uid) async {
     final snapshot = await _firestore.collection('users').doc(uid).get();
     if (!snapshot.exists || snapshot.data() == null) {

@@ -149,6 +149,81 @@ void main() {
       expect(listing.containsKey('photoUrl'), isFalse);
     });
   });
+
+  group('deleteUserData', () {
+    AppUser person(String id, UserRole role) =>
+        AppUser(id: id, email: '$id@example.com', name: id, role: role);
+
+    Future<void> job(String id, Map<String, dynamic> data) =>
+        firestore.doc('serviceRequests/$id').set({
+          'customerUid': 'c1',
+          'status': 'requested',
+          'paymentStatus': 'unpaid',
+          ...data,
+        });
+
+    setUp(() async {
+      await firestore.doc('users/c1').set({'name': 'c1', 'role': 'customer'});
+      await firestore.doc('users/p1').set({'name': 'p1', 'role': 'provider'});
+      await firestore.doc('providerProfiles/p1').set({'name': 'p1'});
+    });
+
+    test('refuses while a job is active or unpaid', () async {
+      await job('active', {'status': 'on_the_way', 'providerUid': 'p1'});
+      await expectLater(
+        () => auth.deleteUserData(person('c1', UserRole.customer)),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('active jobs'),
+          ),
+        ),
+      );
+      await expectLater(
+        () => auth.deleteUserData(person('p1', UserRole.provider)),
+        throwsStateError,
+      );
+      expect((await firestore.doc('users/c1').get()).exists, isTrue);
+
+      await job('active', {
+        'status': 'completed',
+        'providerUid': 'p1',
+        'paymentStatus': 'pending_provider_confirmation',
+      });
+      await expectLater(
+        () => auth.deleteUserData(person('c1', UserRole.customer)),
+        throwsStateError,
+      );
+    });
+
+    test('a customer: open jobs cancelled, profile removed', () async {
+      await job('open', {'status': 'quoted'});
+      await job('done', {
+        'status': 'completed',
+        'providerUid': 'p1',
+        'paymentStatus': 'paid',
+      });
+      await auth.deleteUserData(person('c1', UserRole.customer));
+      final open = (await firestore.doc('serviceRequests/open').get()).data()!;
+      expect(open['status'], 'cancelled');
+      expect(open['cancelReason'], 'The customer deleted their account.');
+      expect(
+        (await firestore.doc('serviceRequests/done').get()).data()!['status'],
+        'completed',
+      );
+      expect((await firestore.doc('users/c1').get()).exists, isFalse);
+    });
+
+    test('a provider: listing and profile removed', () async {
+      await auth.deleteUserData(person('p1', UserRole.provider));
+      expect(
+        (await firestore.doc('providerProfiles/p1').get()).exists,
+        isFalse,
+      );
+      expect((await firestore.doc('users/p1').get()).exists, isFalse);
+    });
+  });
 }
 
 class _NoAuth implements FirebaseAuth {

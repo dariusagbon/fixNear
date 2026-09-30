@@ -31,6 +31,7 @@ class ProviderHomeScreen extends StatelessWidget {
     this.imageUploader,
     this.onSaveProfile,
     this.pickPhoto = pickPhotoWithImagePicker,
+    this.account,
     super.key,
   });
 
@@ -52,6 +53,9 @@ class ProviderHomeScreen extends StatelessWidget {
   final ImageUploader? imageUploader;
   final ProfileSaver? onSaveProfile;
   final PhotoPicker pickPhoto;
+
+  /// Email verification and account deletion, shown in Edit profile.
+  final AccountControls? account;
 
   @override
   Widget build(BuildContext context) {
@@ -123,6 +127,7 @@ class ProviderHomeScreen extends StatelessWidget {
           uploader: imageUploader!,
           onSave: onSaveProfile!,
           pickPhoto: pickPhoto,
+          account: account,
         ),
       ),
     );

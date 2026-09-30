@@ -29,6 +29,7 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     this.imageUploader,
     this.onSaveProfile,
     this.pickPhoto = pickPhotoWithImagePicker,
+    this.account,
     this.pickJobPhotos = pickPhotosWithImagePicker,
     this.push,
     this.location = const GeolocatorLocationService(),
@@ -46,6 +47,9 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   final ImageUploader? imageUploader;
   final ProfileSaver? onSaveProfile;
   final PhotoPicker pickPhoto;
+
+  /// Email verification and account deletion, shown in Edit profile.
+  final AccountControls? account;
 
   /// Picks photos to attach to a new job.
   final MultiPhotoPicker pickJobPhotos;
@@ -433,6 +437,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           uploader: widget.imageUploader!,
           onSave: widget.onSaveProfile!,
           pickPhoto: widget.pickPhoto,
+          account: widget.account,
         ),
       ),
     );

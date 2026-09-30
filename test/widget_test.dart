@@ -2,11 +2,13 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
+import 'package:fixnear/core/services/auth_service.dart';
 import 'package:fixnear/core/services/cloudinary_service.dart';
 import 'package:fixnear/core/services/location_service.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
@@ -1085,6 +1087,123 @@ void main() {
     });
   });
 
+  group('password reset and account', () {
+    testWidgets('forgot password sends a reset link', (tester) async {
+      final auth = _RecordingAuthService();
+      await tester.pumpWidget(
+        MaterialApp(home: LoginScreen(authService: auth)),
+      );
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'casey@example.com',
+      );
+      await tester.tap(find.text('Forgot password?'));
+      await tester.pumpAndSettle();
+      expect(find.text('Reset your password'), findsOneWidget);
+      await tester.tap(find.text('Send link'));
+      await tester.pumpAndSettle();
+      expect(auth.resetEmails, ['casey@example.com']);
+      expect(
+        find.text(
+          'If an account exists for casey@example.com, a reset link is on its way.',
+        ),
+        findsOneWidget,
+      );
+    });
+
+    AppUser me() => AppUser(
+      id: 'customer-1',
+      email: 'casey@example.com',
+      name: 'Casey Customer',
+      role: UserRole.customer,
+    );
+
+    void tallWindow(WidgetTester tester) {
+      tester.view.physicalSize = const Size(800, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+    }
+
+    Widget editProfile(AccountControls controls) => MaterialApp(
+      home: Builder(
+        builder: (context) => Scaffold(
+          body: TextButton(
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => EditProfileScreen(
+                  profile: me(),
+                  uploader: _RecordingUploader(),
+                  onSave: ({required name, phone, photoUrl}) async {},
+                  account: controls,
+                ),
+              ),
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+      ),
+    );
+
+    testWidgets('delete account asks for the password and reports errors', (
+      tester,
+    ) async {
+      tallWindow(tester);
+      final attempts = <String>[];
+      await tester.pumpWidget(
+        editProfile(
+          AccountControls(
+            emailVerified: true,
+            sendVerificationEmail: () async {},
+            deleteAccount: (password) async {
+              attempts.add(password);
+              if (password != 'correct') {
+                throw StateError('That password is incorrect.');
+              }
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete account'));
+      await tester.pumpAndSettle();
+      expect(find.text('Delete your account?'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).last, 'wrong');
+      await tester.tap(find.text('Delete account').last);
+      await tester.pumpAndSettle();
+      expect(find.text('That password is incorrect.'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).last, 'correct');
+      await tester.tap(find.text('Delete account').last);
+      await tester.pumpAndSettle();
+      expect(attempts, ['wrong', 'correct']);
+      // Back at the first screen once the account is gone.
+      expect(find.byType(EditProfileScreen), findsNothing);
+      expect(find.text('Open'), findsOneWidget);
+    });
+
+    testWidgets('unverified emails get a resend option', (tester) async {
+      tallWindow(tester);
+      var sent = 0;
+      await tester.pumpWidget(
+        editProfile(
+          AccountControls(
+            emailVerified: false,
+            sendVerificationEmail: () async => sent++,
+            deleteAccount: (_) async {},
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Send verification email'));
+      await tester.pumpAndSettle();
+      expect(sent, 1);
+      expect(find.textContaining('Verification email sent'), findsOneWidget);
+    });
+  });
+
   group('layouts', () {
     final profile = AppUser(
       id: 'customer-1',
@@ -1612,4 +1731,24 @@ class _RecordingUploader implements ImageUploader {
     folders.add(folder);
     return 'https://res.cloudinary.com/demo/image/upload/v1/photo-${folders.length}.jpg';
   }
+}
+
+class _RecordingAuthService extends AuthService {
+  _RecordingAuthService()
+    : super(firebaseAuth: _UnusedAuth(), firestore: _UnusedFirestore());
+
+  final List<String> resetEmails = [];
+
+  @override
+  Future<void> sendPasswordReset(String email) async => resetEmails.add(email);
+}
+
+class _UnusedAuth implements FirebaseAuth {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _UnusedFirestore implements FirebaseFirestore {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

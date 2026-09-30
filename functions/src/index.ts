@@ -14,12 +14,14 @@ import {
   onDocumentWritten,
 } from 'firebase-functions/v2/firestore';
 import { defineString } from 'firebase-functions/params';
+import * as functionsV1 from 'firebase-functions/v1';
 import type { DeliveryContext } from './deliver';
 import {
   handleJobCreated,
   handleJobUpdated,
   handleMessageCreated,
   handleQuoteWritten,
+  handleUserDeleted,
 } from './handlers';
 
 export const REGION = 'asia-southeast1';
@@ -70,3 +72,11 @@ export const notifyMessageSent = onDocumentCreated(
     if (message) await handleMessageCreated(context(), event.params.requestId, message);
   },
 );
+
+/** A login was deleted: clean up tokens, listing, open quotes, names. */
+export const cleanUpDeletedUser = functionsV1
+  .region(REGION)
+  .auth.user()
+  .onDelete(async (user) => {
+    await handleUserDeleted(context(), user.uid);
+  });
