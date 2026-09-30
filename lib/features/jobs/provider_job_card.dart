@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/attention.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/job_photos.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
@@ -159,6 +160,7 @@ class ProviderJobCard extends StatelessWidget {
               ),
             const SizedBox(height: 8),
             Text(request.description),
+            JobPhotoStrip(urls: request.photoUrls),
             const SizedBox(height: 8),
             Text(
               _isAssigned

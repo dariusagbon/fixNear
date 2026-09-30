@@ -35,6 +35,7 @@ class ProviderProfile {
     required this.isAvailable,
     this.baseLocation,
     this.serviceRadiusKm = defaultServiceRadiusKm,
+    this.photoUrl,
   });
 
   factory ProviderProfile.fromMap(Map<String, dynamic> data, String id) {
@@ -51,6 +52,7 @@ class ProviderProfile {
         data['baseLongitude'],
       ),
       serviceRadiusKm: clampServiceRadiusKm(data['serviceRadiusKm']),
+      photoUrl: data['photoUrl'] as String?,
     );
   }
 
@@ -66,6 +68,9 @@ class ProviderProfile {
   final LatLngPoint? baseLocation;
   final double serviceRadiusKm;
 
+  /// Profile photo (Cloudinary), shown to customers.
+  final String? photoUrl;
+
   Map<String, dynamic> toMap() => {
     'name': name,
     'category': category,
@@ -76,6 +81,7 @@ class ProviderProfile {
     'baseLongitude': baseLocation?.longitude,
     'baseGeohash': baseLocation == null ? null : encodeGeohash(baseLocation!),
     'serviceRadiusKm': serviceRadiusKm,
+    'photoUrl': photoUrl,
   };
 }
 

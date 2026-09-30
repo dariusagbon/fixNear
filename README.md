@@ -14,12 +14,14 @@ customer and confirmed by the provider.
 
 - **Customers**: search providers by category, with distance when location is
   allowed; post a job with a schedule, a map pin or current location (typed area
-  and landmark as a fallback); compare and accept quotes; chat; confirm
-  completion; record cash payment; edit profile and photo (Cloudinary).
+  and landmark as a fallback) and up to 5 photos; compare and accept quotes;
+  chat; confirm completion; record cash payment; edit profile and photo
+  (Cloudinary).
 - **Providers**: go online or offline; set a base location and a service radius
   (2–50 km) on the **Service** tab; see a job board with jobs sent to them
   first, then jobs within their radius nearest first ("2.3 km away"); quote,
-  decline, move jobs forward, confirm cash, track earnings.
+  decline, move jobs forward, confirm cash, track earnings; edit their name,
+  phone and photo (tap their name at the top), which customers see.
 - **Push notifications** for new jobs, quotes, bookings, status changes,
   payments and chat. Tapping one opens the job's detail page.
 
@@ -77,7 +79,8 @@ in `test/widget_test.dart` too.
 
    | Define | Used for | Without it |
    | --- | --- | --- |
-   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET` | Profile photos | Uploads disabled |
+   | `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_UPLOAD_PRESET` | Profile and job photos | Uploads disabled |
+   | `CLOUDINARY_FOLDER` | Default Cloudinary folder (optional) | Profile photos go to `fixnear/avatars`, job photos to `fixnear/service-requests` |
    | `FCM_VAPID_KEY` | Web push | No push on web (Android/iOS still work) |
    | `MAPS_ENABLED=true` | Map pin picker | "Use my current location" and typed area only |
 
@@ -178,8 +181,10 @@ Profile pictures are uploaded straight from the app to Cloudinary using an
    - **Incoming transformation**: `c_limit,w_1024,h_1024`
 4. Use the preset name as `CLOUDINARY_UPLOAD_PRESET`.
 
-The app stores the returned `https://res.cloudinary.com/...` URL in the user's
-`photoUrl` field. Firestore rules only accept Cloudinary URLs there.
+The app stores returned `https://res.cloudinary.com/...` URLs in `photoUrl`
+(user profile and, for providers, their listing) and in a job's `photoUrls`
+(at most 5). Firestore rules only accept Cloudinary URLs for profile photos.
+If your preset fixes an asset folder, it overrides the folders above.
 
 > Never put the Cloudinary **API secret** in the app or in `--dart-define`.
 

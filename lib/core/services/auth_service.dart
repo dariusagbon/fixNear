@@ -1,10 +1,7 @@
-import 'dart:typed_data';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 
 import '../models/app_user.dart';
-import 'cloudinary_service.dart';
 
 class AuthService {
   AuthService({FirebaseAuth? firebaseAuth, FirebaseFirestore? firestore})
@@ -72,33 +69,77 @@ class AuthService {
       });
     }
 
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (_) {
+      // Without a profile the account can't be used. Remove the login so
+      // the person can simply try again, instead of being stuck signed in.
+      try {
+        await credential.user!.delete();
+      } catch (_) {
+        // If this fails too, ensureUserProfileExists repairs it at sign-in.
+      }
+      rethrow;
+    }
 
     return credential;
   }
 
-  Future<String> updateProfilePhoto({
-    required String uid,
-    required Uint8List bytes,
-    required String fileName,
-    String? folder,
-  }) async {
-    final cloudinary = CloudinaryService();
-    final photoUrl = await cloudinary.uploadImage(
-      bytes: bytes,
-      fileName: fileName,
-      folder: folder ?? 'fixnear/profile-photos',
+  /// Repairs an account that has a login but no profile, which happened
+  /// when sign-up failed after the login was created. Returns the profile,
+  /// creating a minimal one if needed: a provider when their provider
+  /// listing exists, otherwise a customer.
+  Future<AppUser> ensureUserProfileExists(User user) async {
+    final existing = await getUserProfile(user.uid);
+    if (existing != null) return existing;
+
+    final providerListing = await _firestore
+        .collection('providerProfiles')
+        .doc(user.uid)
+        .get();
+    final displayName = user.displayName?.trim() ?? '';
+    final listingName = providerListing.data()?['name'];
+    final profile = AppUser(
+      id: user.uid,
+      email: user.email ?? '',
+      name: displayName.isNotEmpty
+          ? displayName
+          : listingName is String && listingName.trim().isNotEmpty
+          ? listingName.trim()
+          : 'FixNear User',
+      role: providerListing.exists ? UserRole.provider : UserRole.customer,
+      createdAt: DateTime.now(),
     );
+    await _firestore.collection('users').doc(user.uid).set(profile.toMap());
+    return profile;
+  }
 
-    await _firestore.collection('users').doc(uid).update({'photoUrl': photoUrl});
-
-    final providerRef = _firestore.collection('providerProfiles').doc(uid);
-    final providerDoc = await providerRef.get();
-    if (providerDoc.exists) {
-      await providerRef.update({'photoUrl': photoUrl});
+  /// Updates the editable fields of a user's profile. Firestore rules only
+  /// allow a user to change their own name, phone and photo. For providers
+  /// the public listing gets the same name and photo, so customers see them.
+  Future<void> updateProfile({
+    required String uid,
+    required String name,
+    String? phone,
+    String? photoUrl,
+    bool isProvider = false,
+  }) async {
+    final trimmedPhone = phone?.trim();
+    final batch = _firestore.batch()
+      ..update(_firestore.collection('users').doc(uid), {
+        'name': name.trim(),
+        'phone': trimmedPhone == null || trimmedPhone.isEmpty
+            ? null
+            : trimmedPhone,
+        'photoUrl': photoUrl,
+      });
+    if (isProvider) {
+      batch.update(_firestore.collection('providerProfiles').doc(uid), {
+        'name': name.trim(),
+        'photoUrl': photoUrl,
+      });
     }
-
-    return photoUrl;
+    await batch.commit();
   }
 
   Future<void> signOut() async {

@@ -27,6 +27,14 @@ service cloud.firestore {
         && (hash == null || (hash is string && hash.size() <= 12));
     }
 
+    // Profile photos are Cloudinary links (or absent).
+    function validPhotoUrl(data) {
+      let url = data.get('photoUrl', null);
+      return url == null
+        || (url is string && url.size() <= 500
+          && url.matches('^https://res[.]cloudinary[.]com/.+'));
+    }
+
     function signedInProvider() {
       return request.auth != null
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'provider';
@@ -60,10 +68,7 @@ service cloud.firestore {
         && (request.resource.data.get('phone', null) == null
           || (request.resource.data.phone is string
             && request.resource.data.phone.size() <= 20))
-        && (request.resource.data.get('photoUrl', null) == null
-          || (request.resource.data.photoUrl is string
-            && request.resource.data.photoUrl.size() <= 500
-            && request.resource.data.photoUrl.matches('^https://res[.]cloudinary[.]com/.+')));
+        && validPhotoUrl(request.resource.data);
 
       allow delete: if false;
 
@@ -105,9 +110,11 @@ service cloud.firestore {
         && signedInProvider()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable',
-          'baseLatitude', 'baseLongitude', 'baseGeohash', 'serviceRadiusKm'
+          'baseLatitude', 'baseLongitude', 'baseGeohash', 'serviceRadiusKm',
+          'photoUrl'
         ])
-        && validProviderLocation(request.resource.data);
+        && validProviderLocation(request.resource.data)
+        && validPhotoUrl(request.resource.data);
 
       allow delete: if false;
     }
@@ -139,6 +146,7 @@ service cloud.firestore {
         && request.resource.data.status == 'requested'
         && request.resource.data.scheduledAt is timestamp
         && request.resource.data.photoUrls is list
+        && request.resource.data.photoUrls.size() <= 5
         && request.resource.data.declinedProviderUids == []
         && request.resource.data.paymentStatus == 'unpaid'
         && request.resource.data.createdAt is timestamp

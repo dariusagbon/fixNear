@@ -29,7 +29,8 @@ class _FakeUploader implements ImageUploader {
   Future<String> uploadImage({
     required Uint8List bytes,
     required String fileName,
-    required String folder,
+    String? folder,
+    String? publicId,
   }) async {
     uploadedBytes = bytes;
     uploadedFolder = folder;
@@ -85,9 +86,11 @@ void main() {
           );
         });
         final service = CloudinaryService(
-          client: client,
-          cloudName: 'demo',
-          uploadPreset: 'fixnear-unsigned',
+          httpClient: client,
+          config: const CloudinaryConfig(
+            cloudName: 'demo',
+            uploadPreset: 'fixnear-unsigned',
+          ),
         );
 
         final url = await service.uploadImage(
@@ -106,9 +109,11 @@ void main() {
 
     test('reports a friendly error when Cloudinary rejects the upload', () {
       final service = CloudinaryService(
-        client: MockClient((_) async => http.Response('{"error":{}}', 400)),
-        cloudName: 'demo',
-        uploadPreset: 'preset',
+        httpClient: MockClient((_) async => http.Response('{"error":{}}', 400)),
+        config: const CloudinaryConfig(
+          cloudName: 'demo',
+          uploadPreset: 'preset',
+        ),
       );
       expect(
         service.uploadImage(
@@ -122,13 +127,17 @@ void main() {
 
     test('refuses uploads when not configured or too large', () {
       expect(
-        CloudinaryService(cloudName: '', uploadPreset: '').isConfigured,
+        CloudinaryService(
+          config: const CloudinaryConfig(cloudName: '', uploadPreset: ''),
+        ).isConfigured,
         isFalse,
       );
       final service = CloudinaryService(
-        client: MockClient((_) async => http.Response('', 500)),
-        cloudName: 'demo',
-        uploadPreset: 'preset',
+        httpClient: MockClient((_) async => http.Response('', 500)),
+        config: const CloudinaryConfig(
+          cloudName: 'demo',
+          uploadPreset: 'preset',
+        ),
       );
       expect(
         service.uploadImage(

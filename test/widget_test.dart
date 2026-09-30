@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -18,6 +19,9 @@ import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
 import 'package:fixnear/features/jobs/job_detail_screen.dart';
 import 'package:fixnear/features/notifications/notification_host.dart';
 import 'package:fixnear/features/profile/edit_profile_screen.dart';
+
+import 'dart:convert';
+
 import 'package:fixnear/features/provider/provider_home_screen.dart';
 
 void main() {
@@ -299,7 +303,9 @@ void main() {
             role: UserRole.customer,
             phone: '09123456789',
           ),
-          imageUploader: CloudinaryService(cloudName: '', uploadPreset: ''),
+          imageUploader: CloudinaryService(
+            config: const CloudinaryConfig(cloudName: '', uploadPreset: ''),
+          ),
           onSaveProfile: ({required name, phone, photoUrl}) async {},
         ),
       ),
@@ -760,6 +766,163 @@ void main() {
     });
   });
 
+  group('job photos and provider profile', () {
+    // A valid 1x1 PNG.
+    final png = base64Decode(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    );
+
+    Future<void> fillForm(WidgetTester tester) async {
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'Repair a leaking kitchen faucet',
+      );
+      await tester.enterText(find.byType(TextFormField).last, 'Davao City');
+      await tester.tap(find.text('Choose date and time'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+    }
+
+    Future<void> send(WidgetTester tester) async {
+      await tester.scrollUntilVisible(
+        find.text('Send request'),
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byType(BottomSheet),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.tap(find.text('Send request'));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('customers attach photos that upload when the job is sent', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository();
+      final uploader = _RecordingUploader();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: repository,
+            location: _FakeLocation(),
+            imageUploader: uploader,
+            pickJobPhotos: () async => [
+              PickedPhoto(bytes: png, fileName: 'sink.png'),
+              PickedPhoto(bytes: png, fileName: 'pipe.png'),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Request service').first);
+      await tester.pumpAndSettle();
+      await fillForm(tester);
+
+      await tester.ensureVisible(find.text('Add photos'));
+      await tester.tap(find.text('Add photos'));
+      await tester.pumpAndSettle();
+      expect(find.text('2 of 5 photos'), findsOneWidget);
+      // Nothing uploads until the request is sent.
+      expect(uploader.folders, isEmpty);
+
+      await tester.tap(find.byTooltip('Remove photo 2'));
+      await tester.pumpAndSettle();
+      expect(find.text('1 of 5 photos'), findsOneWidget);
+
+      await send(tester);
+      expect(uploader.folders, ['fixnear/service-requests']);
+      expect(repository.createdPhotoUrls, [
+        'https://res.cloudinary.com/demo/image/upload/v1/photo-1.jpg',
+      ]);
+    });
+
+    testWidgets('photo attachment is hidden until uploads are configured', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: _FakeMarketplaceRepository(),
+            location: _FakeLocation(),
+            imageUploader: _RecordingUploader(configured: false),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Request service').first);
+      await tester.pumpAndSettle();
+      expect(find.text('Add photos'), findsNothing);
+    });
+
+    testWidgets('providers see job photos on their board', (tester) async {
+      final repository = _FakeMarketplaceRepository()
+        ..openRequests = [
+          ServiceRequest(
+            id: 'with-photos',
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            category: 'Plumbing',
+            description: 'Leaking pipe under the sink',
+            serviceArea: 'Davao City',
+            status: RequestStatus.requested,
+            createdAt: DateTime(2026),
+            photoUrls: const [
+              'https://res.cloudinary.com/demo/image/upload/v1/a.jpg',
+              'https://res.cloudinary.com/demo/image/upload/v1/b.jpg',
+            ],
+          ),
+        ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: repository,
+            location: _FakeLocation(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.bySemanticsLabel('Open job photo 1 of 2'), findsOneWidget);
+    });
+
+    testWidgets('providers open Edit profile from their name', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ProviderHomeScreen(
+            providerUid: 'provider-1',
+            providerName: 'Provider One',
+            repository: _FakeMarketplaceRepository(),
+            location: _FakeLocation(),
+            profile: AppUser(
+              id: 'provider-1',
+              email: 'pat@example.com',
+              name: 'Pat Plumbing',
+              role: UserRole.provider,
+            ),
+            imageUploader: _RecordingUploader(),
+            onSaveProfile: ({required name, phone, photoUrl}) async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Pat Plumbing'), findsOneWidget);
+      await tester.tap(find.text('Pat Plumbing'));
+      await tester.pumpAndSettle();
+      expect(find.byType(EditProfileScreen), findsOneWidget);
+    });
+  });
+
   group('layouts', () {
     final profile = AppUser(
       id: 'customer-1',
@@ -769,8 +932,9 @@ void main() {
     );
     // Built inside each test: constructing an HTTP client outside a test
     // zone fails under flutter_test.
-    CloudinaryService uploader() =>
-        CloudinaryService(cloudName: '', uploadPreset: '');
+    CloudinaryService uploader() => CloudinaryService(
+      config: const CloudinaryConfig(cloudName: '', uploadPreset: ''),
+    );
 
     _FakeMarketplaceRepository busyRepository() => _FakeMarketplaceRepository()
       ..customerRequests = [
@@ -998,6 +1162,7 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   String? createdCategory;
   String? createdDescription;
   double? createdLatitude;
+  List<String>? createdPhotoUrls;
   double? createdLongitude;
   DateTime? createdScheduledAt;
   ProviderProfile? createdProvider;
@@ -1116,6 +1281,7 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
     createdCategory = category;
     createdDescription = description;
     createdLatitude = latitude;
+    createdPhotoUrls = photoUrls;
     createdLongitude = longitude;
     createdProvider = provider;
     createdScheduledAt = scheduledAt;
@@ -1229,5 +1395,26 @@ class _FakeLocation implements LocationService {
       throw LocationUnavailable(failure ?? 'Location unavailable.');
     }
     return point;
+  }
+}
+
+class _RecordingUploader implements ImageUploader {
+  _RecordingUploader({this.configured = true});
+
+  final bool configured;
+  final List<String?> folders = [];
+
+  @override
+  bool get isConfigured => configured;
+
+  @override
+  Future<String> uploadImage({
+    required Uint8List bytes,
+    required String fileName,
+    String? folder,
+    String? publicId,
+  }) async {
+    folders.add(folder);
+    return 'https://res.cloudinary.com/demo/image/upload/v1/photo-${folders.length}.jpg';
   }
 }

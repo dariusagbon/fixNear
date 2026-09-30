@@ -1,9 +1,7 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 
 import '../../core/models/app_user.dart';
+import '../../core/services/cloudinary_service.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/location_service.dart';
 import '../../core/services/marketplace_service.dart';
@@ -11,7 +9,9 @@ import '../../core/services/push_notifications.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/geo.dart';
 import '../../core/utils/job_matching.dart';
+import '../../core/widgets/profile_avatar.dart';
 import '../notifications/notification_permission.dart';
+import '../profile/edit_profile_screen.dart';
 import 'provider_service_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
@@ -19,65 +19,25 @@ import '../../core/widgets/status_chip.dart';
 import '../jobs/job_detail_screen.dart';
 import '../jobs/provider_job_card.dart';
 
-class ProviderHomeScreen extends StatefulWidget {
+class ProviderHomeScreen extends StatelessWidget {
   const ProviderHomeScreen({
     required this.providerUid,
     required this.providerName,
     required this.repository,
-    this.photoUrl,
     this.onSignOut,
-<<<<<<< HEAD
-    this.onUpdateProfilePhoto,
-=======
     this.push,
     this.location = const GeolocatorLocationService(),
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
+    this.profile,
+    this.imageUploader,
+    this.onSaveProfile,
+    this.pickPhoto = pickPhotoWithImagePicker,
     super.key,
   });
 
   final String providerUid;
   final String providerName;
-  final String? photoUrl;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
-  final Future<String> Function(Uint8List bytes, String fileName)?
-  onUpdateProfilePhoto;
-
-  @override
-  State<ProviderHomeScreen> createState() => _ProviderHomeScreenState();
-}
-
-class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
-  Future<void> _uploadProfilePhoto() async {
-    if (widget.onUpdateProfilePhoto == null) return;
-
-    try {
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 85,
-      );
-      if (image == null || !mounted) return;
-
-      final bytes = await image.readAsBytes();
-      await widget.onUpdateProfilePhoto!(bytes, image.name);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile photo updated.')),
-      );
-      setState(() {});
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Could not update your profile photo. ${error.toString()}',
-          ),
-        ),
-      );
-    }
-  }
 
   /// Used to ask for notification permission the first time the provider
   /// goes online. Null in tests and when push isn't available.
@@ -86,44 +46,35 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
   /// Device location, for setting the base location.
   final LocationService location;
 
+  /// The provider's account profile. Profile editing (name, phone, photo) is
+  /// available when this, [imageUploader] and [onSaveProfile] are provided.
+  final AppUser? profile;
+  final ImageUploader? imageUploader;
+  final ProfileSaver? onSaveProfile;
+  final PhotoPicker pickPhoto;
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
       length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: Row(
-            children: [
-              if (widget.photoUrl != null) ...[
-                CircleAvatar(
-                  radius: 18,
-                  backgroundImage: NetworkImage(widget.photoUrl!),
-                ),
-                const SizedBox(width: 10),
-              ],
-              Text(widget.providerName),
-            ],
+          titleSpacing: 8,
+          title: _ProfileTitle(
+            name: profile?.name ?? providerName,
+            photoUrl: profile?.photoUrl,
+            onTap: _canEditProfile ? () => _openEditProfile(context) : null,
           ),
           actions: [
-<<<<<<< HEAD
-            if (widget.onUpdateProfilePhoto != null)
-              IconButton(
-                tooltip: 'Update profile photo',
-                onPressed: _uploadProfilePhoto,
-                icon: const Icon(Icons.photo_camera_outlined),
-              ),
-            if (widget.onSignOut != null)
-=======
             _OnlineSwitch(
               providerUid: providerUid,
               repository: repository,
               push: push,
             ),
             if (onSignOut != null)
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
               IconButton(
                 tooltip: 'Sign out',
-                onPressed: widget.onSignOut,
+                onPressed: onSignOut,
                 icon: const Icon(Icons.logout_rounded),
               ),
           ],
@@ -137,57 +88,6 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
         ),
         body: TabBarView(
           children: [
-<<<<<<< HEAD
-            _RequestList(
-              requests: widget.repository.watchOpenRequests(widget.providerUid),
-              emptyMessage: 'No open requests nearby yet.',
-              actionLabel: 'Send quote',
-              onAction: (request) async {
-                final quote = await showDialog<_QuoteSubmission>(
-                  context: context,
-                  builder: (_) => const _QuoteDialog(),
-                );
-                if (quote == null) return;
-                await widget.repository.sendQuote(
-                  requestId: request.id,
-                  providerUid: widget.providerUid,
-                  providerName: widget.providerName,
-                  price: quote.price,
-                  note: quote.note,
-                );
-                if (!context.mounted) return;
-                ScaffoldMessenger.of(context)
-                    .showSnackBar(const SnackBar(content: Text('Quote sent.')));
-              },
-              onDecline: (request) =>
-                  widget.repository.declineRequest(request.id, widget.providerUid),
-            ),
-            _RequestList(
-              requests: widget.repository.watchProviderJobs(widget.providerUid),
-              emptyMessage: 'Accepted jobs will appear here.',
-              actionLabel: null,
-              onAction: (request) {
-                final nextStatus = switch (request.status) {
-                  RequestStatus.accepted => RequestStatus.onTheWay,
-                  RequestStatus.onTheWay => RequestStatus.arrived,
-                  RequestStatus.arrived => RequestStatus.inProgress,
-                  RequestStatus.inProgress => RequestStatus.providerCompleted,
-                  _ => null,
-                };
-                if (nextStatus == null) return Future.value();
-                return widget.repository.advanceRequest(request.id, nextStatus);
-              },
-              onOpenChat: (request) => showJobChatSheet(
-                context: context,
-                requestId: request.id,
-                currentUid: widget.providerUid,
-                currentName: widget.providerName,
-                repository: widget.repository,
-              ),
-              onConfirmCashPayment: (request) =>
-                  widget.repository.confirmCashPayment(request.id, widget.providerUid),
-              showProgressActions: true,
-=======
             _JobBoard(
               repository: repository,
               providerUid: providerUid,
@@ -205,9 +105,24 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
               providerUid: providerUid,
               repository: repository,
               location: location,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  bool get _canEditProfile =>
+      profile != null && imageUploader != null && onSaveProfile != null;
+
+  void _openEditProfile(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => EditProfileScreen(
+          profile: profile!,
+          uploader: imageUploader!,
+          onSave: onSaveProfile!,
+          pickPhoto: pickPhoto,
         ),
       ),
     );
@@ -228,6 +143,43 @@ class _ProviderHomeScreenState extends State<ProviderHomeScreen> {
           viewerName: providerName,
           viewerRole: UserRole.provider,
           repository: repository,
+        ),
+      ),
+    );
+  }
+}
+
+/// The provider's photo and name; tapping opens Edit profile.
+class _ProfileTitle extends StatelessWidget {
+  const _ProfileTitle({required this.name, this.photoUrl, this.onTap});
+
+  final String name;
+  final String? photoUrl;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          ProfileAvatar(name: name, photoUrl: photoUrl, radius: 18),
+          const SizedBox(width: 10),
+          Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
+        ],
+      ),
+    );
+    if (onTap == null) return content;
+    return Semantics(
+      button: true,
+      label: 'Edit profile',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: AppTheme.minTapTarget),
+          child: content,
         ),
       ),
     );

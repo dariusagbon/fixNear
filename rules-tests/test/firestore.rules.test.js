@@ -204,6 +204,17 @@ describe('providerProfiles', () => {
     await assertFails(updateDoc(ref, serviceSettingsUpdate({ baseGeohash: 'x'.repeat(40) })));
   });
 
+  it('lets a provider set a Cloudinary photo and name on their listing', async () => {
+    const ref = doc(dbAs(env, PROVIDER), `providerProfiles/${PROVIDER}`);
+    await assertSucceeds(updateDoc(ref, {
+      name: 'Pat Plumbing',
+      photoUrl: 'https://res.cloudinary.com/gp7e9yws/image/upload/v1/p.jpg',
+    }));
+    await assertSucceeds(updateDoc(ref, { photoUrl: null }));
+    await assertFails(updateDoc(ref, { photoUrl: 'https://evil.example/p.jpg' }));
+    await assertFails(updateDoc(ref, { photoUrl: 42 }));
+  });
+
   it('rejects edits by other providers or customers', async () => {
     await assertFails(updateDoc(
       doc(dbAs(env, OTHER_PROVIDER), `providerProfiles/${PROVIDER}`),
@@ -228,6 +239,14 @@ describe('serviceRequests: posting a job', () => {
   it('lets a customer post a job with a pinned location', async () => {
     const db = dbAs(env, CUSTOMER);
     await assertSucceeds(setDoc(doc(db, REQ), newRequest()));
+  });
+
+  it('allows up to five job photos', async () => {
+    const db = dbAs(env, CUSTOMER);
+    const photos = (n) => Array.from({ length: n },
+      (_, i) => `https://res.cloudinary.com/demo/image/upload/v1/job-${i}.jpg`);
+    await assertSucceeds(setDoc(doc(db, REQ), { ...newRequest(), photoUrls: photos(5) }));
+    await assertFails(setDoc(doc(db, 'serviceRequests/request-2'), { ...newRequest(), photoUrls: photos(6) }));
   });
 
   it('rejects an oversized geohash', async () => {

@@ -34,6 +34,26 @@ Future<PickedPhoto?> pickPhotoWithImagePicker(ImageSource source) async {
   return PickedPhoto(bytes: await file.readAsBytes(), fileName: file.name);
 }
 
+/// Picks several photos (e.g. for a job). Returns an empty list if the user
+/// cancels.
+typedef MultiPhotoPicker = Future<List<PickedPhoto>> Function();
+
+Future<List<PickedPhoto>> pickPhotosWithImagePicker() async {
+  final files = await ImagePicker().pickMultiImage(
+    maxWidth: 1600,
+    maxHeight: 1600,
+    imageQuality: 85,
+    limit: maxJobPhotos,
+  );
+  return [
+    for (final file in files.take(maxJobPhotos))
+      PickedPhoto(bytes: await file.readAsBytes(), fileName: file.name),
+  ];
+}
+
+/// Most photos a customer can attach to one job (also enforced by rules).
+const maxJobPhotos = 5;
+
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({
     required this.profile,

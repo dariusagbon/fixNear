@@ -1,11 +1,4 @@
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
-<<<<<<< HEAD
-import 'package:geolocator/geolocator.dart';
-import 'package:image_picker/image_picker.dart';
-=======
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
 
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
@@ -30,28 +23,21 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     required this.customerUid,
     required this.customerName,
     required this.repository,
-    this.photoUrl,
     this.onSignOut,
-<<<<<<< HEAD
-    this.onUpdateProfilePhoto,
-=======
     this.profile,
     this.imageUploader,
     this.onSaveProfile,
     this.pickPhoto = pickPhotoWithImagePicker,
+    this.pickJobPhotos = pickPhotosWithImagePicker,
     this.push,
     this.location = const GeolocatorLocationService(),
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
     super.key,
   });
 
   final String customerUid;
   final String customerName;
-  final String? photoUrl;
   final MarketplaceRepository repository;
   final Future<void> Function()? onSignOut;
-  final Future<String> Function(Uint8List bytes, String fileName)?
-  onUpdateProfilePhoto;
 
   /// The signed-in customer's profile. Profile editing is available when this,
   /// [imageUploader] and [onSaveProfile] are all provided.
@@ -59,6 +45,9 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   final ImageUploader? imageUploader;
   final ProfileSaver? onSaveProfile;
   final PhotoPicker pickPhoto;
+
+  /// Picks photos to attach to a new job.
+  final MultiPhotoPicker pickJobPhotos;
 
   /// Used to ask for notification permission after the first job is posted.
   final PushNotifications? push;
@@ -371,27 +360,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   }
 
   Widget _buildAccount() {
-<<<<<<< HEAD
-    final avatar = widget.photoUrl;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CircleAvatar(
-              radius: 34,
-              backgroundImage: avatar == null ? null : NetworkImage(avatar),
-              child: avatar == null
-                  ? Text(
-                      initialsFor(widget.customerName),
-                      style: const TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    )
-                  : null,
-=======
     final profile = widget.profile;
     final canEdit =
         profile != null &&
@@ -436,7 +404,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
                   ),
                 ],
               ),
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
             ),
           const SizedBox(height: 20),
           if (canEdit)
@@ -445,25 +412,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
               icon: const Icon(Icons.edit_outlined),
               label: const Text('Edit profile'),
             ),
-<<<<<<< HEAD
-            const SizedBox(height: 4),
-            const Text('Customer account'),
-            const SizedBox(height: 20),
-            if (widget.onUpdateProfilePhoto != null)
-              OutlinedButton.icon(
-                onPressed: _uploadProfilePhoto,
-                icon: const Icon(Icons.photo_camera_outlined),
-                label: const Text('Upload photo'),
-              ),
-            const SizedBox(height: 12),
-            if (widget.onSignOut != null)
-              OutlinedButton.icon(
-                onPressed: widget.onSignOut,
-                icon: const Icon(Icons.logout_rounded),
-                label: const Text('Sign out'),
-              ),
-          ],
-=======
           const SizedBox(height: 10),
           if (widget.onSignOut != null)
             OutlinedButton.icon(
@@ -484,7 +432,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           uploader: widget.imageUploader!,
           onSave: widget.onSaveProfile!,
           pickPhoto: widget.pickPhoto,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
         ),
       ),
     );
@@ -497,6 +444,8 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       useSafeArea: true,
       builder: (context) => _NewRequestSheet(
         location: widget.location,
+        uploader: widget.imageUploader,
+        pickPhotos: widget.pickJobPhotos,
         initialCategory: provider?.category ?? _selectedCategory,
         provider: provider,
         onSubmit:
@@ -543,49 +492,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
     }
   }
 
-<<<<<<< HEAD
-  Future<void> _uploadProfilePhoto() async {
-    if (widget.onUpdateProfilePhoto == null) return;
-
-    try {
-      final picker = ImagePicker();
-      final image = await picker.pickImage(
-        source: ImageSource.gallery,
-        imageQuality: 85,
-      );
-      if (image == null || !mounted) return;
-
-      final bytes = await image.readAsBytes();
-      await widget.onUpdateProfilePhoto!(bytes, image.name);
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile photo updated.')),
-      );
-      setState(() {});
-    } catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            friendlyErrorMessage(
-              error,
-              'Could not update your profile photo.',
-            ),
-          ),
-        ),
-      );
-    }
-  }
-
-  Future<void> _cancelRequest(ServiceRequest request) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Cancel this request?'),
-        content: Text(
-          'Providers will no longer see your ${request.category.toLowerCase()} request.',
-=======
   CustomerJobActions get _jobActions => CustomerJobActions(
     repository: widget.repository,
     customerUid: widget.customerUid,
@@ -601,7 +507,6 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
           viewerName: widget.customerName,
           viewerRole: UserRole.customer,
           repository: widget.repository,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
         ),
       ),
     );
@@ -702,12 +607,18 @@ class _NewRequestSheet extends StatefulWidget {
     required this.initialCategory,
     required this.provider,
     required this.location,
+    required this.uploader,
+    required this.pickPhotos,
     required this.onSubmit,
   });
 
   final String? initialCategory;
   final ProviderProfile? provider;
   final LocationService location;
+
+  /// Uploads job photos; photos are hidden when missing or not configured.
+  final ImageUploader? uploader;
+  final MultiPhotoPicker pickPhotos;
   final Future<void> Function(
     String category,
     String description,
@@ -731,14 +642,9 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
   final _locationController = TextEditingController();
   late String _category;
   DateTime? _scheduledAt;
-<<<<<<< HEAD
-  double? _latitude;
-  double? _longitude;
-  final List<XFile> _selectedImages = [];
-  final List<String> _uploadedImageUrls = [];
-=======
   LatLngPoint? _pin;
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
+  final List<PickedPhoto> _photos = [];
+  String? _progress;
   bool _isSubmitting = false;
   String? _error;
 
@@ -870,6 +776,15 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
                   ),
                 ],
               ),
+            if (_photosEnabled) ...[
+              const SizedBox(height: 12),
+              _JobPhotoPicker(
+                photos: _photos,
+                enabled: !_isSubmitting,
+                onAdd: _addPhotos,
+                onRemove: (index) => setState(() => _photos.removeAt(index)),
+              ),
+            ],
             const SizedBox(height: 12),
             TextFormField(
               controller: _areaController,
@@ -879,58 +794,6 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
                   ? 'Enter the service area'
                   : null,
             ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _pickPhotos,
-                    icon: const Icon(Icons.photo_library_outlined),
-                    label: const Text('Add photo'),
-                  ),
-                ),
-                if (_selectedImages.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 8),
-                    child: Text('${_selectedImages.length} selected'),
-                  ),
-              ],
-            ),
-            if (_selectedImages.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              SizedBox(
-                height: 90,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: _selectedImages.length,
-                  separatorBuilder: (_, _) => const SizedBox(width: 8),
-                  itemBuilder: (context, index) {
-                    final image = _selectedImages[index];
-                    return FutureBuilder<Uint8List>(
-                      future: image.readAsBytes(),
-                      builder: (context, snapshot) {
-                        if (!snapshot.hasData) {
-                          return const SizedBox(
-                            width: 80,
-                            height: 80,
-                            child: Center(child: CircularProgressIndicator()),
-                          );
-                        }
-                        return ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
-                          child: Image.memory(
-                            snapshot.data!,
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                          ),
-                        );
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
             if (_error != null) ...[
               const SizedBox(height: 10),
               Text(
@@ -949,6 +812,15 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
                     )
                   : const Text('Send request'),
             ),
+            if (_progress != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _progress!,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
           ],
         ),
       ),
@@ -966,20 +838,20 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       _error = null;
     });
     try {
-      _uploadedImageUrls.clear();
-      if (_selectedImages.isNotEmpty) {
-        final cloudinary = CloudinaryService();
-        for (final image in _selectedImages) {
-          final bytes = await image.readAsBytes();
-          final url = await cloudinary.uploadImage(
-            bytes: bytes,
-            fileName: image.name,
+      final photoUrls = <String>[];
+      for (var i = 0; i < _photos.length; i++) {
+        setState(
+          () => _progress = 'Uploading photo ${i + 1} of ${_photos.length}…',
+        );
+        photoUrls.add(
+          await widget.uploader!.uploadImage(
+            bytes: _photos[i].bytes,
+            fileName: _photos[i].fileName,
             folder: 'fixnear/service-requests',
-          );
-          _uploadedImageUrls.add(url);
-        }
+          ),
+        );
       }
-
+      if (mounted) setState(() => _progress = null);
       await widget.onSubmit(
         _category,
         _descriptionController.text,
@@ -990,15 +862,51 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         _pin?.latitude,
         _pin?.longitude,
         _scheduledAt!,
-        _uploadedImageUrls,
+        photoUrls,
       );
       if (mounted) Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        setState(() => _error = 'Could not send your request. Try again.');
+        setState(
+          () => _error = friendlyErrorMessage(
+            error,
+            'Could not send your request. Try again.',
+          ),
+        );
       }
     } finally {
-      if (mounted) setState(() => _isSubmitting = false);
+      if (mounted) {
+        setState(() {
+          _isSubmitting = false;
+          _progress = null;
+        });
+      }
+    }
+  }
+
+  bool get _photosEnabled => widget.uploader?.isConfigured ?? false;
+
+  Future<void> _addPhotos() async {
+    try {
+      final picked = await widget.pickPhotos();
+      if (!mounted || picked.isEmpty) return;
+      final tooBig = picked.where(
+        (photo) => photo.bytes.length > CloudinaryService.maxUploadBytes,
+      );
+      setState(() {
+        _photos.addAll(
+          picked
+              .where((photo) => !tooBig.contains(photo))
+              .take(maxJobPhotos - _photos.length),
+        );
+        _error = tooBig.isEmpty
+            ? null
+            : 'Some photos were larger than 5 MB and were left out.';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() => _error = 'Could not add photos. Please try again.');
+      }
     }
   }
 
@@ -1021,28 +929,6 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
     }
   }
 
-<<<<<<< HEAD
-  Future<void> _pickPhotos() async {
-    try {
-      final picker = ImagePicker();
-      final photos = await picker.pickMultiImage();
-      if (photos.isEmpty) return;
-      setState(() {
-        _selectedImages
-          ..clear()
-          ..addAll(photos);
-        _error = null;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = friendlyErrorMessage(
-          error,
-          'Could not add photos. Please try again.',
-        );
-      });
-    }
-=======
   Future<void> _pickOnMap() async {
     final point = await pickLocationOnMap(
       context,
@@ -1051,7 +937,6 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       title: 'Where is the job?',
     );
     if (point != null && mounted) _setPin(point, 'Pinned location');
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
   }
 
   Future<void> _chooseSchedule() async {
@@ -1080,6 +965,89 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
       );
       _error = null;
     });
+  }
+}
+
+/// Thumbnails of the photos attached to a new job, with add and remove.
+class _JobPhotoPicker extends StatelessWidget {
+  const _JobPhotoPicker({
+    required this.photos,
+    required this.enabled,
+    required this.onAdd,
+    required this.onRemove,
+  });
+
+  final List<PickedPhoto> photos;
+  final bool enabled;
+  final VoidCallback onAdd;
+  final void Function(int index) onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                photos.isEmpty
+                    ? 'Photos help providers quote accurately (optional).'
+                    : '${photos.length} of $maxJobPhotos photos',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+            TextButton.icon(
+              onPressed: enabled && photos.length < maxJobPhotos ? onAdd : null,
+              icon: const Icon(Icons.add_a_photo_outlined),
+              label: const Text('Add photos'),
+            ),
+          ],
+        ),
+        if (photos.isNotEmpty)
+          SizedBox(
+            height: 84,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: photos.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => Stack(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(
+                      photos[index].bytes,
+                      width: 84,
+                      height: 84,
+                      fit: BoxFit.cover,
+                      semanticLabel: 'Job photo ${index + 1}',
+                      errorBuilder: (_, _, _) => Container(
+                        width: 84,
+                        height: 84,
+                        color: AppTheme.tint,
+                        child: const Icon(Icons.broken_image_outlined),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: IconButton(
+                      tooltip: 'Remove photo ${index + 1}',
+                      onPressed: enabled ? () => onRemove(index) : null,
+                      icon: const CircleAvatar(
+                        radius: 12,
+                        backgroundColor: AppTheme.ink,
+                        child: Icon(Icons.close, size: 14, color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }
 

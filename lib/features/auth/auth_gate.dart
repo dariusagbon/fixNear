@@ -74,97 +74,47 @@ class _AuthGateState extends State<AuthGate> {
 
             final profile = profileSnapshot.data;
             if (profile == null) {
-              return FutureBuilder<AppUser?>(
-                future: _authService.ensureUserProfileExists(user),
-                builder: (context, recoverySnapshot) {
-                  if (recoverySnapshot.connectionState == ConnectionState.waiting) {
-                    return const _LoadingScreen();
-                  }
-                  if (recoverySnapshot.hasError || recoverySnapshot.data == null) {
-                    return _AuthStatusScreen(
-                      title: 'Account profile missing',
-                      message:
-                          'Your account could not be restored. Please try signing out and back in.',
-                      actionLabel: 'Sign out',
-                      onAction: _authService.signOut,
-                    );
-                  }
-                  return switch (recoverySnapshot.data!.role) {
-                    UserRole.customer => CustomerMarketplaceScreen(
-                      customerUid: recoverySnapshot.data!.id,
-                      customerName: recoverySnapshot.data!.name,
-                      photoUrl: recoverySnapshot.data!.photoUrl,
-                      repository: _marketplace,
-                      onSignOut: _authService.signOut,
-                      onUpdateProfilePhoto: (bytes, fileName) =>
-                          _authService.updateProfilePhoto(
-                            uid: recoverySnapshot.data!.id,
-                            bytes: bytes,
-                            fileName: fileName,
-                          ),
-                    ),
-                    UserRole.provider => ProviderHomeScreen(
-                      providerUid: recoverySnapshot.data!.id,
-                      providerName: recoverySnapshot.data!.name,
-                      photoUrl: recoverySnapshot.data!.photoUrl,
-                      repository: _marketplace,
-                      onSignOut: _authService.signOut,
-                      onUpdateProfilePhoto: (bytes, fileName) =>
-                          _authService.updateProfilePhoto(
-                            uid: recoverySnapshot.data!.id,
-                            bytes: bytes,
-                            fileName: fileName,
-                          ),
-                    ),
-                  };
-                },
+              // Sign-up failed after the login was created. Rebuild the
+              // profile; the stream above then shows the normal home.
+              return _ProfileRecovery(
+                user: user,
+                authService: _authService,
+                onSignOut: _authService.signOut,
               );
             }
+
+            Future<void> saveProfile({
+              required String name,
+              String? phone,
+              String? photoUrl,
+            }) => _authService.updateProfile(
+              uid: profile.id,
+              name: name,
+              phone: phone,
+              photoUrl: photoUrl,
+              isProvider: profile.role == UserRole.provider,
+            );
 
             final home = switch (profile.role) {
               UserRole.customer => CustomerMarketplaceScreen(
                 customerUid: profile.id,
                 customerName: profile.name,
-                photoUrl: profile.photoUrl,
                 repository: _marketplace,
-<<<<<<< HEAD
-                onSignOut: _authService.signOut,
-                onUpdateProfilePhoto: (bytes, fileName) =>
-                    _authService.updateProfilePhoto(
-                      uid: profile.id,
-                      bytes: bytes,
-                      fileName: fileName,
-=======
                 onSignOut: () => _signOut(profile.id),
                 profile: profile,
                 imageUploader: _imageUploader,
                 push: _push,
-                onSaveProfile: ({required name, phone, photoUrl}) =>
-                    _authService.updateProfile(
-                      uid: profile.id,
-                      name: name,
-                      phone: phone,
-                      photoUrl: photoUrl,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
-                    ),
+                onSaveProfile: saveProfile,
               ),
               UserRole.provider => ProviderHomeScreen(
                 providerUid: profile.id,
                 providerName: profile.name,
-                photoUrl: profile.photoUrl,
                 repository: _marketplace,
-<<<<<<< HEAD
-                onSignOut: _authService.signOut,
-                onUpdateProfilePhoto: (bytes, fileName) =>
-                    _authService.updateProfilePhoto(
-                      uid: profile.id,
-                      bytes: bytes,
-                      fileName: fileName,
-                    ),
-=======
                 onSignOut: () => _signOut(profile.id),
                 push: _push,
->>>>>>> 904e434f9190bd218d6d4749e605770a566009fc
+                profile: profile,
+                imageUploader: _imageUploader,
+                onSaveProfile: saveProfile,
               ),
             };
             return NotificationHost(
@@ -494,18 +444,66 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
+/// Shown while repairing an account that has a login but no profile.
+class _ProfileRecovery extends StatefulWidget {
+  const _ProfileRecovery({
+    required this.user,
+    required this.authService,
+    required this.onSignOut,
+  });
+
+  final User user;
+  final AuthService authService;
+  final Future<void> Function() onSignOut;
+
+  @override
+  State<_ProfileRecovery> createState() => _ProfileRecoveryState();
+}
+
+class _ProfileRecoveryState extends State<_ProfileRecovery> {
+  late Future<AppUser> _recovery = _recover();
+
+  Future<AppUser> _recover() =>
+      widget.authService.ensureUserProfileExists(widget.user);
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<AppUser>(
+      future: _recovery,
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _AuthStatusScreen(
+            title: 'Could not finish setting up your account',
+            message: 'Check your connection and try again.',
+            actionLabel: 'Try again',
+            onAction: () async => setState(() => _recovery = _recover()),
+            secondaryLabel: 'Sign out',
+            onSecondary: widget.onSignOut,
+          );
+        }
+        // On success the profile stream replaces this screen.
+        return const _LoadingScreen();
+      },
+    );
+  }
+}
+
 class _AuthStatusScreen extends StatelessWidget {
   const _AuthStatusScreen({
     required this.title,
     required this.message,
     required this.actionLabel,
     required this.onAction,
+    this.secondaryLabel,
+    this.onSecondary,
   });
 
   final String title;
   final String message;
   final String actionLabel;
   final Future<void> Function() onAction;
+  final String? secondaryLabel;
+  final Future<void> Function()? onSecondary;
 
   @override
   Widget build(BuildContext context) {
@@ -516,11 +514,20 @@ class _AuthStatusScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(title, style: Theme.of(context).textTheme.titleLarge),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.titleLarge,
+              ),
               const SizedBox(height: 8),
               Text(message, textAlign: TextAlign.center),
               const SizedBox(height: 16),
               FilledButton(onPressed: onAction, child: Text(actionLabel)),
+              if (secondaryLabel != null && onSecondary != null)
+                TextButton(
+                  onPressed: onSecondary,
+                  child: Text(secondaryLabel!),
+                ),
             ],
           ),
         ),

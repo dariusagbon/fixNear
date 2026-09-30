@@ -6,6 +6,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/utils/attention.dart';
 import '../../core/utils/feedback.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/widgets/job_photos.dart';
 import '../../core/widgets/status_chip.dart';
 import '../messaging/job_chat_sheet.dart';
 
@@ -140,6 +141,7 @@ class CustomerRequestCard extends StatelessWidget {
               Text('Provider: ${request.providerName}'),
             if (request.quotedPrice != null)
               Text('Agreed quote: ${formatPeso(request.quotedPrice!)}'),
+            JobPhotoStrip(urls: request.photoUrls),
             if (_isOpen)
               _QuoteList(
                 quotes: actions.repository.watchQuotes(request.id),
