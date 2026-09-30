@@ -34,6 +34,7 @@ import {
   newRequest,
   providerProfileDoc,
   quoteDoc,
+  serviceSettingsUpdate,
   recordCashUpdate,
   seed,
   statusUpdate,
@@ -182,6 +183,27 @@ describe('providerProfiles', () => {
     }));
   });
 
+  it('lets a provider save their base location and service radius', async () => {
+    const ref = doc(dbAs(env, PROVIDER), `providerProfiles/${PROVIDER}`);
+    await assertSucceeds(updateDoc(ref, serviceSettingsUpdate()));
+    await assertSucceeds(updateDoc(ref, serviceSettingsUpdate({ serviceRadiusKm: 2 })));
+    await assertSucceeds(updateDoc(ref, serviceSettingsUpdate({ serviceRadiusKm: 50 })));
+    // Clearing the base location is allowed.
+    await assertSucceeds(updateDoc(ref, serviceSettingsUpdate({
+      baseLatitude: null, baseLongitude: null, baseGeohash: null,
+    })));
+  });
+
+  it('rejects a radius outside 2–50 km or a broken location', async () => {
+    const ref = doc(dbAs(env, PROVIDER), `providerProfiles/${PROVIDER}`);
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ serviceRadiusKm: 1 })));
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ serviceRadiusKm: 51 })));
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ serviceRadiusKm: '10' })));
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ baseLongitude: null })));
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ baseLatitude: 91 })));
+    await assertFails(updateDoc(ref, serviceSettingsUpdate({ baseGeohash: 'x'.repeat(40) })));
+  });
+
   it('rejects edits by other providers or customers', async () => {
     await assertFails(updateDoc(
       doc(dbAs(env, OTHER_PROVIDER), `providerProfiles/${PROVIDER}`),
@@ -206,6 +228,11 @@ describe('serviceRequests: posting a job', () => {
   it('lets a customer post a job with a pinned location', async () => {
     const db = dbAs(env, CUSTOMER);
     await assertSucceeds(setDoc(doc(db, REQ), newRequest()));
+  });
+
+  it('rejects an oversized geohash', async () => {
+    const db = dbAs(env, CUSTOMER);
+    await assertFails(setDoc(doc(db, REQ), newRequest({ geohash: 'x'.repeat(40) })));
   });
 
   it('lets a customer post a job without coordinates', async () => {

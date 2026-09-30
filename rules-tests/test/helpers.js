@@ -135,6 +135,7 @@ export function newRequest({
   providerName = null,
   latitude = 7.0731,
   longitude = 125.6128,
+  geohash = latitude == null ? null : 'wc324rs7y',
   locationLabel = 'Home',
 } = {}) {
   return {
@@ -146,6 +147,7 @@ export function newRequest({
     locationLabel,
     latitude,
     longitude,
+    geohash,
     providerUid,
     providerName,
     status: 'requested',
@@ -157,6 +159,18 @@ export function newRequest({
     updatedAt: serverTimestamp(),
   };
 }
+
+/** updateProviderServiceSettings(). */
+export const serviceSettingsUpdate = (overrides = {}) => ({
+  category: 'Plumbing',
+  serviceArea: 'Lanang, Davao City',
+  startingPrice: 600,
+  baseLatitude: 7.0996,
+  baseLongitude: 125.6317,
+  baseGeohash: 'wc326u6nn',
+  serviceRadiusKm: 10,
+  ...overrides,
+});
 
 /** A stored request (server timestamps resolved) in a given state. */
 export function storedRequest(overrides = {}) {

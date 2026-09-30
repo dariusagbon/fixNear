@@ -2,10 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
+import '../../core/services/location_service.dart';
 import '../../core/services/marketplace_service.dart';
 import '../../core/services/push_notifications.dart';
 import '../../core/utils/feedback.dart';
+import '../../core/utils/geo.dart';
+import '../../core/utils/job_matching.dart';
 import '../notifications/notification_permission.dart';
+import 'provider_service_settings.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
 import '../../core/widgets/status_chip.dart';
@@ -19,6 +23,7 @@ class ProviderHomeScreen extends StatelessWidget {
     required this.repository,
     this.onSignOut,
     this.push,
+    this.location = const GeolocatorLocationService(),
     super.key,
   });
 
@@ -31,10 +36,13 @@ class ProviderHomeScreen extends StatelessWidget {
   /// goes online. Null in tests and when push isn't available.
   final PushNotifications? push;
 
+  /// Device location, for setting the base location.
+  final LocationService location;
+
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 2,
+      length: 3,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Provider workspace'),
@@ -53,16 +61,17 @@ class ProviderHomeScreen extends StatelessWidget {
           ],
           bottom: const TabBar(
             tabs: [
-              Tab(text: 'Open requests'),
+              Tab(text: 'Job board'),
               Tab(text: 'My jobs'),
+              Tab(text: 'Service'),
             ],
           ),
         ),
         body: TabBarView(
           children: [
-            _JobList(
-              requests: repository.watchOpenRequests(providerUid),
-              emptyMessage: 'No open requests nearby yet.',
+            _JobBoard(
+              repository: repository,
+              providerUid: providerUid,
               actions: actions,
               onOpenJob: (id) => _openJob(context, id),
             ),
@@ -72,6 +81,11 @@ class ProviderHomeScreen extends StatelessWidget {
               actions: actions,
               onOpenJob: (id) => _openJob(context, id),
               showEarnings: true,
+            ),
+            ProviderServiceSettings(
+              providerUid: providerUid,
+              repository: repository,
+              location: location,
             ),
           ],
         ),
@@ -158,6 +172,97 @@ class _OnlineSwitch extends StatelessWidget {
                   : (value) => _set(context, value),
             ),
           ],
+        );
+      },
+    );
+  }
+}
+
+/// Open jobs for this provider: sent to them first, then within their
+/// radius by distance, then older jobs without coordinates.
+class _JobBoard extends StatelessWidget {
+  const _JobBoard({
+    required this.repository,
+    required this.providerUid,
+    required this.actions,
+    required this.onOpenJob,
+  });
+
+  final MarketplaceRepository repository;
+  final String providerUid;
+  final ProviderJobActions actions;
+  final void Function(String requestId) onOpenJob;
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<ProviderProfile?>(
+      stream: repository.watchProviderProfile(providerUid),
+      builder: (context, profileSnapshot) {
+        return StreamBuilder<List<ServiceRequest>>(
+          stream: repository.watchOpenRequests(providerUid),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              return const _EmptyState(
+                icon: Icons.cloud_off_outlined,
+                message: 'Could not load jobs. Check your connection.',
+              );
+            }
+            if (snapshot.connectionState == ConnectionState.waiting ||
+                profileSnapshot.connectionState == ConnectionState.waiting) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final profile = profileSnapshot.data;
+            final board = buildJobBoard(
+              jobs: snapshot.data ?? const [],
+              providerUid: providerUid,
+              profile: profile,
+            );
+            final noBase = profile != null && profile.baseLocation == null;
+            final radius = (profile?.serviceRadiusKm ?? defaultServiceRadiusKm)
+                .round();
+
+            return ContentWidth(
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  if (noBase) ...[
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.near_me_outlined),
+                        title: const Text('Set your base location'),
+                        subtitle: const Text(
+                          'Then you only see jobs within your radius, '
+                          'nearest first.',
+                        ),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () =>
+                            DefaultTabController.of(context).animateTo(2),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (board.isEmpty)
+                    _EmptyState(
+                      icon: Icons.inbox_outlined,
+                      message: noBase || profile == null
+                          ? 'No open jobs yet.'
+                          : 'No open jobs within $radius km yet.',
+                    ),
+                  for (final entry in board) ...[
+                    ProviderJobCard(
+                      request: entry.request,
+                      actions: actions,
+                      onOpenDetails: () => onOpenJob(entry.request.id),
+                      distanceLabel: entry.distanceKm == null
+                          ? null
+                          : formatDistance(entry.distanceKm!),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
+              ),
+            );
+          },
         );
       },
     );

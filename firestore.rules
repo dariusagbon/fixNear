@@ -12,6 +12,21 @@ service cloud.firestore {
           && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180);
     }
 
+    // A provider's base location (optional, both halves or neither) and
+    // service radius (2–50 km). Providers from before distance matching
+    // have none of these fields.
+    function validProviderLocation(data) {
+      let lat = data.get('baseLatitude', null);
+      let lng = data.get('baseLongitude', null);
+      let radius = data.get('serviceRadiusKm', null);
+      let hash = data.get('baseGeohash', null);
+      return ((lat == null && lng == null)
+          || (lat is number && lng is number
+            && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180))
+        && (radius == null || (radius is number && radius >= 2 && radius <= 50))
+        && (hash == null || (hash is string && hash.size() <= 12));
+    }
+
     function signedInProvider() {
       return request.auth != null
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'provider';
@@ -89,8 +104,10 @@ service cloud.firestore {
         && request.auth.uid == providerId
         && signedInProvider()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
-          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable'
-        ]);
+          'name', 'category', 'serviceArea', 'startingPrice', 'isAvailable',
+          'baseLatitude', 'baseLongitude', 'baseGeohash', 'serviceRadiusKm'
+        ])
+        && validProviderLocation(request.resource.data);
 
       allow delete: if false;
     }
@@ -101,13 +118,16 @@ service cloud.firestore {
         && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'customer'
         && request.resource.data.keys().hasOnly([
           'customerUid', 'customerName', 'category', 'description', 'serviceArea',
-          'locationLabel', 'latitude', 'longitude',
+          'locationLabel', 'latitude', 'longitude', 'geohash',
           'providerUid', 'providerName', 'status', 'scheduledAt', 'photoUrls',
           'declinedProviderUids', 'paymentStatus', 'createdAt', 'updatedAt'
         ])
         && (request.resource.data.get('locationLabel', null) == null
           || request.resource.data.locationLabel is string)
         && validCoordinates(request.resource.data)
+        && (request.resource.data.get('geohash', null) == null
+          || (request.resource.data.geohash is string
+            && request.resource.data.geohash.size() <= 12))
         && request.resource.data.customerName is string
         && request.resource.data.category is string
         && request.resource.data.description is string

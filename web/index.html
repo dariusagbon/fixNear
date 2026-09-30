@@ -82,6 +82,19 @@
       setTimeout(function () { loader.remove(); }, 300);
     });
   </script>
+  <!-- Google Maps for the pin picker. maps-config.js is not committed; copy
+       maps-config.example.js to maps-config.js and add a referrer-restricted
+       key. Without it, the app works and hides the map. -->
+  <script src="maps-config.js" onerror="void 0"></script>
+  <script>
+    if (window.FIXNEAR_MAPS_API_KEY) {
+      var maps = document.createElement('script');
+      maps.src = 'https://maps.googleapis.com/maps/api/js?key=' +
+        encodeURIComponent(window.FIXNEAR_MAPS_API_KEY);
+      maps.async = true;
+      document.head.appendChild(maps);
+    }
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:fixnear/core/models/marketplace_models.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
+import 'package:fixnear/core/utils/geo.dart';
 
 /// Runs the whole job loop through the real [FirestoreMarketplaceRepository]
 /// (transactions, status checks and payment rules) on an in-memory Firestore.
@@ -38,6 +39,7 @@ void main() {
     var job = await onlyRequest();
     expect(job.status, RequestStatus.requested);
     expect(job.latitude, 7.0731);
+    expect(job.geohash, encodeGeohash(const LatLngPoint(7.0731, 125.6128)));
 
     final board = await repository.watchOpenRequests(provider).first;
     expect(board.map((r) => r.id), [job.id]);
@@ -183,5 +185,38 @@ void main() {
       (await repository.watchOpenRequests(otherProvider).first).single.id,
       job.id,
     );
+  });
+
+  test('provider settings save a base location with geohash', () async {
+    await firestore.doc('providerProfiles/$provider').set({
+      'name': 'Pat Provider',
+      'category': 'Plumbing',
+      'serviceArea': 'Davao City',
+      'startingPrice': 500,
+      'isAvailable': false,
+    });
+    // An old profile reads with safe defaults.
+    var profile = await repository.watchProviderProfile(provider).first;
+    expect(profile!.baseLocation, isNull);
+    expect(profile.serviceRadiusKm, 10);
+
+    await repository.setProviderAvailability(provider, true);
+    await repository.updateProviderServiceSettings(
+      providerUid: provider,
+      category: 'Electrical',
+      serviceArea: ' Lanang ',
+      startingPrice: 650,
+      baseLocation: const LatLngPoint(7.0996, 125.6317),
+      serviceRadiusKm: 80,
+    );
+    profile = await repository.watchProviderProfile(provider).first;
+    expect(profile!.isAvailable, isTrue);
+    expect(profile.category, 'Electrical');
+    expect(profile.serviceArea, 'Lanang');
+    expect(profile.baseLocation, const LatLngPoint(7.0996, 125.6317));
+    expect(profile.serviceRadiusKm, 50, reason: 'clamped to the maximum');
+    final raw = (await firestore.doc('providerProfiles/$provider').get())
+        .data()!;
+    expect(raw['baseGeohash'], 'wc326u6nn');
   });
 }

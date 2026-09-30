@@ -56,3 +56,7 @@ functions/lib/
 .env
 .env.*
 *.local
+
+# Google Maps keys (see README)
+web/maps-config.js
+ios/Flutter/Secrets.xcconfig

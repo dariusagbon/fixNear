@@ -7,10 +7,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fixnear/core/models/app_user.dart';
 import 'package:fixnear/core/models/marketplace_models.dart';
 import 'package:fixnear/core/services/cloudinary_service.dart';
+import 'package:fixnear/core/services/location_service.dart';
 import 'package:fixnear/core/services/marketplace_service.dart';
 import 'package:fixnear/core/services/push_notifications.dart';
 import 'package:fixnear/core/theme/app_theme.dart';
 import 'package:fixnear/core/utils/formatters.dart';
+import 'package:fixnear/core/utils/geo.dart';
 import 'package:fixnear/features/auth/auth_gate.dart';
 import 'package:fixnear/features/customer/customer_marketplace_screen.dart';
 import 'package:fixnear/features/jobs/job_detail_screen.dart';
@@ -36,6 +38,8 @@ void main() {
 
     expect(find.text('Available providers'), findsOneWidget);
     expect(find.text('Provider One'), findsOneWidget);
+    await tester.ensureVisible(find.byIcon(Icons.send_rounded));
+    await tester.pumpAndSettle();
     await tester.tap(find.byIcon(Icons.send_rounded));
     await tester.pumpAndSettle();
     await tester.enterText(
@@ -427,6 +431,8 @@ void main() {
       // Nothing is asked at launch.
       expect(find.text('Get updates on your job?'), findsNothing);
 
+      await tester.ensureVisible(find.byIcon(Icons.send_rounded));
+      await tester.pumpAndSettle();
       await tester.tap(find.byIcon(Icons.send_rounded));
       await tester.pumpAndSettle();
       await tester.enterText(
@@ -513,6 +519,244 @@ void main() {
       await tester.tap(find.byType(Switch));
       await tester.pumpAndSettle();
       expect(find.byType(AlertDialog), findsNothing);
+    });
+  });
+
+  group('distance matching', () {
+    const downtown = LatLngPoint(7.0654, 125.6076);
+    const lanang = LatLngPoint(7.0996, 125.6317);
+    const toril = LatLngPoint(7.0187, 125.4966);
+
+    ServiceRequest openJob(
+      String id,
+      String description, {
+      LatLngPoint? at,
+      String? providerUid,
+    }) => ServiceRequest(
+      id: id,
+      customerUid: 'customer-1',
+      customerName: 'Casey Customer',
+      category: 'Plumbing',
+      description: description,
+      serviceArea: 'Davao City',
+      status: RequestStatus.requested,
+      providerUid: providerUid,
+      createdAt: DateTime(2026),
+      latitude: at?.latitude,
+      longitude: at?.longitude,
+    );
+
+    ProviderProfile me({LatLngPoint? base}) => ProviderProfile(
+      id: 'provider-1',
+      name: 'Provider One',
+      category: 'Plumbing',
+      serviceArea: 'Davao City',
+      startingPrice: 500,
+      isAvailable: true,
+      baseLocation: base,
+    );
+
+    Widget providerHome(
+      _FakeMarketplaceRepository repository, {
+      LocationService? location,
+    }) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      home: ProviderHomeScreen(
+        providerUid: 'provider-1',
+        providerName: 'Provider One',
+        repository: repository,
+        location: location ?? _FakeLocation(),
+      ),
+    );
+
+    testWidgets('job board: direct first, nearby by distance, far hidden', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = me(base: downtown)
+        ..openRequests = [
+          openJob('far', 'Far job in Toril', at: toril),
+          openJob('near', 'Job in Lanang', at: lanang),
+          openJob('old', 'Old job without a pin'),
+          openJob(
+            'direct',
+            'Sent to me directly',
+            at: toril,
+            providerUid: 'provider-1',
+          ),
+        ];
+      await tester.pumpWidget(providerHome(repository));
+      await tester.pumpAndSettle();
+
+      final order = [
+        'Sent to me directly',
+        'Job in Lanang',
+        'Old job without a pin',
+      ].map((text) => tester.getTopLeft(find.text(text)).dy).toList();
+      expect(order, orderedEquals([...order]..sort()));
+      expect(find.text('Far job in Toril'), findsNothing);
+      expect(find.text('4.6 km away'), findsOneWidget);
+      expect(find.text('Sent directly to you'), findsOneWidget);
+      expect(find.text('Set your base location'), findsNothing);
+    });
+
+    testWidgets('job board asks for a base location when there is none', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository()
+        ..ownProfile = me()
+        ..openRequests = [openJob('far', 'Far job in Toril', at: toril)];
+      await tester.pumpWidget(providerHome(repository));
+      await tester.pumpAndSettle();
+      // Nothing is hidden without a base; the prompt links to Service.
+      expect(find.text('Far job in Toril'), findsOneWidget);
+      await tester.tap(find.text('Set your base location'));
+      await tester.pumpAndSettle();
+      expect(find.text('Service radius: 10 km'), findsOneWidget);
+    });
+
+    testWidgets('service tab saves base location and radius', (tester) async {
+      final repository = _FakeMarketplaceRepository()..ownProfile = me();
+      await tester.pumpWidget(
+        providerHome(repository, location: _FakeLocation(here: lanang)),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Service'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('No base location yet'), findsOneWidget);
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Base location: 7.0996'), findsOneWidget);
+
+      // Drag the slider to the far right: 50 km.
+      await tester.ensureVisible(find.byType(Slider));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byType(Slider), const Offset(600, 0));
+      await tester.pumpAndSettle();
+      expect(find.text('Service radius: 50 km'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('Save settings'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save settings'));
+      await tester.pumpAndSettle();
+      expect(repository.savedSettings?.baseLocation, lanang);
+      expect(repository.savedSettings?.serviceRadiusKm, 50);
+      expect(find.text('Service settings saved.'), findsOneWidget);
+    });
+
+    testWidgets('service tab explains when location is unavailable', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository()..ownProfile = me();
+      await tester.pumpWidget(
+        providerHome(
+          repository,
+          location: _FakeLocation(
+            failure: 'Allow location access to use your current location.',
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Service'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Allow location access to use your current location.'),
+        findsOneWidget,
+      );
+    });
+
+    testWidgets('customers see provider distances once location is known', (
+      tester,
+    ) async {
+      final location = _FakeLocation(here: downtown, permitted: false);
+      final repository = _FakeMarketplaceRepository()
+        ..providers = [
+          const ProviderProfile(
+            id: 'p-far',
+            name: 'Far Provider',
+            category: 'Plumbing',
+            serviceArea: 'Toril',
+            startingPrice: 500,
+            isAvailable: true,
+            baseLocation: toril,
+          ),
+          const ProviderProfile(
+            id: 'p-near',
+            name: 'Near Provider',
+            category: 'Plumbing',
+            serviceArea: 'Lanang',
+            startingPrice: 500,
+            isAvailable: true,
+            baseLocation: lanang,
+          ),
+        ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: repository,
+            location: location,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      // Not asked at launch; no distances yet.
+      expect(location.requests, 0);
+      expect(find.textContaining('km away'), findsNothing);
+
+      await tester.tap(find.text('Show distances'));
+      await tester.pumpAndSettle();
+      expect(location.requests, 1);
+      expect(find.text('Lanang · 4.6 km away'), findsOneWidget);
+      expect(find.text('Toril · 13 km away'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Near Provider')).dy,
+        lessThan(tester.getTopLeft(find.text('Far Provider')).dy),
+      );
+    });
+
+    testWidgets('posting a job with the current location saves the pin', (
+      tester,
+    ) async {
+      final repository = _FakeMarketplaceRepository();
+      await tester.pumpWidget(
+        MaterialApp(
+          home: CustomerMarketplaceScreen(
+            customerUid: 'customer-1',
+            customerName: 'Casey Customer',
+            repository: repository,
+            location: _FakeLocation(here: lanang),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Request service').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Use my current location'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Pinned at 7.0996'), findsOneWidget);
+
+      await tester.enterText(
+        find.byType(TextFormField).first,
+        'Repair a leaking kitchen faucet',
+      );
+      await tester.enterText(find.byType(TextFormField).last, 'Davao City');
+      await tester.tap(find.text('Choose date and time'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OK').last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('Send request'));
+      await tester.tap(find.text('Send request'));
+      await tester.pumpAndSettle();
+
+      expect(repository.createdLatitude, lanang.latitude);
+      expect(repository.createdLongitude, lanang.longitude);
     });
   });
 
@@ -673,7 +917,16 @@ void main() {
           ProviderHomeScreen(
             providerUid: 'provider-1',
             providerName: 'Provider One',
-            repository: busyRepository(),
+            repository: busyRepository()
+              ..ownProfile = const ProviderProfile(
+                id: 'provider-1',
+                name: 'Provider One',
+                category: 'Plumbing',
+                serviceArea: 'Davao City',
+                startingPrice: 500,
+                isAvailable: true,
+              ),
+            location: _FakeLocation(),
           ),
         );
         // A job sent directly to this provider waits on them.
@@ -681,6 +934,10 @@ void main() {
         await checkGuidelines(tester);
         await tester.tap(find.text('My jobs'));
         await tester.pumpAndSettle();
+        await checkGuidelines(tester);
+        await tester.tap(find.text('Service'));
+        await tester.pumpAndSettle();
+        expect(find.text('Save settings'), findsOneWidget);
         await checkGuidelines(tester);
       });
 
@@ -740,6 +997,8 @@ void main() {
 class _FakeMarketplaceRepository implements MarketplaceRepository {
   String? createdCategory;
   String? createdDescription;
+  double? createdLatitude;
+  double? createdLongitude;
   DateTime? createdScheduledAt;
   ProviderProfile? createdProvider;
   List<ServiceRequest> openRequests = [];
@@ -750,23 +1009,36 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   List<ServiceRequest> providerJobs = [];
   ProviderProfile? ownProfile;
   final List<bool> availabilityChanges = [];
+  ({
+    String category,
+    String serviceArea,
+    int startingPrice,
+    LatLngPoint? baseLocation,
+    double serviceRadiusKm,
+  })?
+  savedSettings;
   final Map<String, List<ProviderQuote>> quotesByRequest = {};
   String? acceptedRequestId;
   ProviderQuote? acceptedQuote;
   Object? acceptQuoteError;
   String? cancelledRequestId;
 
+  List<ProviderProfile>? providers;
+
   @override
-  Stream<List<ProviderProfile>> watchProviders() => Stream.value([
-    const ProviderProfile(
-      id: 'provider-1',
-      name: 'Provider One',
-      category: 'Plumbing',
-      serviceArea: 'Davao City',
-      startingPrice: 500,
-      isAvailable: true,
-    ),
-  ]);
+  Stream<List<ProviderProfile>> watchProviders() => Stream.value(
+    providers ??
+        [
+          const ProviderProfile(
+            id: 'provider-1',
+            name: 'Provider One',
+            category: 'Plumbing',
+            serviceArea: 'Davao City',
+            startingPrice: 500,
+            isAvailable: true,
+          ),
+        ],
+  );
 
   @override
   Stream<List<ServiceRequest>> watchCustomerRequests(String customerUid) =>
@@ -782,6 +1054,24 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
     bool isAvailable,
   ) async {
     availabilityChanges.add(isAvailable);
+  }
+
+  @override
+  Future<void> updateProviderServiceSettings({
+    required String providerUid,
+    required String category,
+    required String serviceArea,
+    required int startingPrice,
+    required LatLngPoint? baseLocation,
+    required double serviceRadiusKm,
+  }) async {
+    savedSettings = (
+      category: category,
+      serviceArea: serviceArea,
+      startingPrice: startingPrice,
+      baseLocation: baseLocation,
+      serviceRadiusKm: serviceRadiusKm,
+    );
   }
 
   @override
@@ -825,6 +1115,8 @@ class _FakeMarketplaceRepository implements MarketplaceRepository {
   }) async {
     createdCategory = category;
     createdDescription = description;
+    createdLatitude = latitude;
+    createdLongitude = longitude;
     createdProvider = provider;
     createdScheduledAt = scheduledAt;
   }
@@ -916,4 +1208,26 @@ class _FakePush implements PushNotifications {
 
   @override
   Stream<ForegroundNotice> get foregroundNotices => foreground.stream;
+}
+
+class _FakeLocation implements LocationService {
+  _FakeLocation({this.here, this.permitted = true, this.failure});
+
+  final LatLngPoint? here;
+  final bool permitted;
+  final String? failure;
+  int requests = 0;
+
+  @override
+  Future<LatLngPoint?> currentIfPermitted() async => permitted ? here : null;
+
+  @override
+  Future<LatLngPoint> requestCurrent() async {
+    requests++;
+    final point = here;
+    if (failure != null || point == null) {
+      throw LocationUnavailable(failure ?? 'Location unavailable.');
+    }
+    return point;
+  }
 }

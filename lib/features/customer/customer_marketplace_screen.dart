@@ -1,17 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:geolocator/geolocator.dart';
 
 import '../../core/models/app_user.dart';
 import '../../core/models/marketplace_models.dart';
 import '../../core/services/cloudinary_service.dart';
 import '../../core/services/marketplace_service.dart';
+import '../../core/services/location_service.dart';
 import '../../core/services/push_notifications.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/utils/formatters.dart';
+import '../../core/utils/geo.dart';
+import '../../core/utils/job_matching.dart';
 import '../../core/widgets/profile_avatar.dart';
 import '../../core/widgets/status_chip.dart';
 import '../jobs/customer_job_card.dart';
 import '../jobs/job_detail_screen.dart';
+import '../location/map_pin_picker.dart';
 import '../notifications/notification_permission.dart';
 import '../profile/edit_profile_screen.dart';
 
@@ -26,6 +29,7 @@ class CustomerMarketplaceScreen extends StatefulWidget {
     this.onSaveProfile,
     this.pickPhoto = pickPhotoWithImagePicker,
     this.push,
+    this.location = const GeolocatorLocationService(),
     super.key,
   });
 
@@ -44,6 +48,9 @@ class CustomerMarketplaceScreen extends StatefulWidget {
   /// Used to ask for notification permission after the first job is posted.
   final PushNotifications? push;
 
+  /// Device location, for pinning jobs and showing provider distances.
+  final LocationService location;
+
   @override
   State<CustomerMarketplaceScreen> createState() =>
       _CustomerMarketplaceScreenState();
@@ -53,6 +60,34 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
   final _searchController = TextEditingController();
   String? _selectedCategory;
   int _selectedTab = 0;
+
+  /// The customer's location for provider distances; only read without a
+  /// prompt, or after they tap "Show distances".
+  LatLngPoint? _here;
+  bool _locating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.location.currentIfPermitted().then((here) {
+      if (here != null && mounted) setState(() => _here = here);
+    });
+  }
+
+  Future<void> _showDistances() async {
+    setState(() => _locating = true);
+    try {
+      final here = await widget.location.requestCurrent();
+      if (mounted) setState(() => _here = here);
+    } on LocationUnavailable catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.message)));
+      }
+    } finally {
+      if (mounted) setState(() => _locating = false);
+    }
+  }
 
   @override
   void dispose() {
@@ -237,14 +272,27 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
               }
 
               return Column(
-                children: providers
-                    .map(
-                      (provider) => _ProviderCard(
-                        provider: provider,
-                        onRequest: () => _showRequestForm(provider: provider),
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_here == null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: _locating ? null : _showDistances,
+                        icon: const Icon(Icons.near_me_outlined),
+                        label: Text(
+                          _locating ? 'Finding you…' : 'Show distances',
+                        ),
                       ),
-                    )
-                    .toList(),
+                    ),
+                  for (final entry in withDistances(providers, _here))
+                    _ProviderCard(
+                      provider: entry.profile,
+                      distanceKm: entry.distanceKm,
+                      onRequest: () =>
+                          _showRequestForm(provider: entry.profile),
+                    ),
+                ],
               );
             },
           ),
@@ -391,6 +439,7 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
       isScrollControlled: true,
       useSafeArea: true,
       builder: (context) => _NewRequestSheet(
+        location: widget.location,
         initialCategory: provider?.category ?? _selectedCategory,
         provider: provider,
         onSubmit:
@@ -468,10 +517,15 @@ class _CustomerMarketplaceScreenState extends State<CustomerMarketplaceScreen> {
 }
 
 class _ProviderCard extends StatelessWidget {
-  const _ProviderCard({required this.provider, required this.onRequest});
+  const _ProviderCard({
+    required this.provider,
+    required this.onRequest,
+    this.distanceKm,
+  });
 
   final ProviderProfile provider;
   final VoidCallback onRequest;
+  final double? distanceKm;
 
   @override
   Widget build(BuildContext context) {
@@ -511,7 +565,13 @@ class _ProviderCard extends StatelessWidget {
               children: [
                 const Icon(Icons.location_on_outlined, size: 17),
                 const SizedBox(width: 4),
-                Expanded(child: Text(provider.serviceArea)),
+                Expanded(
+                  child: Text(
+                    distanceKm == null
+                        ? provider.serviceArea
+                        : '${provider.serviceArea} · ${formatDistance(distanceKm!)}',
+                  ),
+                ),
                 Text(
                   'From ${formatPeso(provider.startingPrice)}',
                   style: Theme.of(context).textTheme.titleSmall,
@@ -538,11 +598,13 @@ class _NewRequestSheet extends StatefulWidget {
   const _NewRequestSheet({
     required this.initialCategory,
     required this.provider,
+    required this.location,
     required this.onSubmit,
   });
 
   final String? initialCategory;
   final ProviderProfile? provider;
+  final LocationService location;
   final Future<void> Function(
     String category,
     String description,
@@ -565,8 +627,7 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
   final _locationController = TextEditingController();
   late String _category;
   DateTime? _scheduledAt;
-  double? _latitude;
-  double? _longitude;
+  LatLngPoint? _pin;
   bool _isSubmitting = false;
   String? _error;
 
@@ -665,21 +726,38 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
               ),
             ),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: _useCurrentLocation,
-                icon: const Icon(Icons.my_location_rounded),
-                label: const Text('Use my current location'),
-              ),
-            ),
-            if (_latitude != null && _longitude != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Pinned: ${_latitude!.toStringAsFixed(4)}, ${_longitude!.toStringAsFixed(4)}',
-                  style: Theme.of(context).textTheme.bodySmall,
+            Wrap(
+              spacing: 8,
+              children: [
+                TextButton.icon(
+                  onPressed: _useCurrentLocation,
+                  icon: const Icon(Icons.my_location_rounded),
+                  label: const Text('Use my current location'),
                 ),
+                if (mapsEnabled)
+                  TextButton.icon(
+                    onPressed: _pickOnMap,
+                    icon: const Icon(Icons.map_outlined),
+                    label: Text(_pin == null ? 'Pick on map' : 'Move pin'),
+                  ),
+              ],
+            ),
+            if (_pin != null)
+              Row(
+                children: [
+                  const Icon(Icons.place_rounded, size: 18),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Pinned at ${_pin!.latitude.toStringAsFixed(4)}, ${_pin!.longitude.toStringAsFixed(4)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => setState(() => _pin = null),
+                    child: const Text('Remove pin'),
+                  ),
+                ],
               ),
             const SizedBox(height: 12),
             TextFormField(
@@ -732,8 +810,8 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
         _locationController.text.trim().isEmpty
             ? _areaController.text.trim()
             : _locationController.text.trim(),
-        _latitude,
-        _longitude,
+        _pin?.latitude,
+        _pin?.longitude,
         _scheduledAt!,
       );
       if (mounted) Navigator.pop(context, true);
@@ -746,40 +824,33 @@ class _NewRequestSheetState extends State<_NewRequestSheet> {
     }
   }
 
+  void _setPin(LatLngPoint point, String defaultLabel) {
+    setState(() {
+      _pin = point;
+      if (_locationController.text.trim().isEmpty) {
+        _locationController.text = defaultLabel;
+      }
+      _error = null;
+    });
+  }
+
   Future<void> _useCurrentLocation() async {
     try {
-      final permission = await Geolocator.checkPermission();
-      final status = permission == LocationPermission.denied
-          ? await Geolocator.requestPermission()
-          : permission;
-      if (status == LocationPermission.denied ||
-          status == LocationPermission.deniedForever) {
-        throw StateError(
-          'Allow location access to pin your location, or type it instead.',
-        );
-      }
-      final position = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(
-          accuracy: LocationAccuracy.medium,
-        ),
-      );
-      setState(() {
-        _latitude = position.latitude;
-        _longitude = position.longitude;
-        _locationController.text = _locationController.text.trim().isEmpty
-            ? 'Current location'
-            : _locationController.text.trim();
-        _error = null;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _error = friendlyErrorMessage(
-          error,
-          'Could not access your current location. Type it instead.',
-        );
-      });
+      final here = await widget.location.requestCurrent();
+      if (mounted) _setPin(here, 'Current location');
+    } on LocationUnavailable catch (error) {
+      if (mounted) setState(() => _error = error.message);
     }
+  }
+
+  Future<void> _pickOnMap() async {
+    final point = await pickLocationOnMap(
+      context,
+      location: widget.location,
+      initial: _pin,
+      title: 'Where is the job?',
+    );
+    if (point != null && mounted) _setPin(point, 'Pinned location');
   }
 
   Future<void> _chooseSchedule() async {
